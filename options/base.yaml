@@ -48,8 +48,8 @@ output_root: output                                         # root path for outp
 tb:                                                         # TensorBoard options
     num_images: [4,8]                                       # number of (tiled) images to visualize in TensorBoard
 visdom:                                                     # Visdom options
-    server: localhost                                       # server to host Visdom
-    port: 9000                                              # port number for Visdom
+    server: 0.0.0.0                                       # server to host Visdom
+    port: 8001                                              # port number for Visdom
 
 freq:                                                       # periodic actions during training
     scalar: 200                                             # log losses and scalar states (every N iterations)
