@@ -188,3 +188,10 @@ def colorcode_to_number(code):
     ords = [n-48 if n<58 else n-87 for n in ords]
     rgb = (ords[0]*16+ords[1],ords[2]*16+ords[3],ords[4]*16+ords[5])
     return rgb
+
+
+def interp_schedule(x, schedule, left=0, right=1):
+    # linear interprete between a list of schedule values 
+    assert left <= x and right >= x
+    xs = np.linspace(left, right, len(schedule))
+    return np.interp(x, xs, schedule)
