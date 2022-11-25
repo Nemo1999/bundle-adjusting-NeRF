@@ -14,7 +14,7 @@ import util,util_vis
 from util import log,debug
 from . import base
 import warp
-
+from icecream import ic
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -34,6 +34,7 @@ class Model(base.Model):
 
     def setup_optimizer(self,opt):
         log.info("setting up optimizers...")
+        ic(util.gpu_memory_usage(self.graph.neural_image))
         optim_list = [
             dict(params=self.graph.neural_image.parameters(),lr=opt.optim.lr),
             dict(params=self.graph.warp_param.parameters(),lr=opt.optim.lr_warp),
