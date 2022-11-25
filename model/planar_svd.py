@@ -73,9 +73,8 @@ class SVDImageFunction(torch.nn.Module):
         return kernel
 
     def get_kernel(self) -> torch.tensor :
-        p = self.progress
         # the blurness of kernel depends on scheduled t parameter
-        t = interp_schedule(p, self.c2f_kernel)
+        t = interp_schedule(self.progress , self.c2f_kernel)
         if self.kernel_type == "gaussian": 
             kernel = self.get_gaussian_kernel(t, self.kernel_size)
         else: 
@@ -84,38 +83,16 @@ class SVDImageFunction(torch.nn.Module):
         return kernel.to(self.device)
     
     def define_network(self, resolution, max_rank):
-        
+        self.rank1 = torch.zeros(3, self.max_ranks, self.resolution)
+        self.rank2 = torch.zeros(3, self.max_ranks, self.resolution)
 
     def forward(self,opt,coord_2D): # [B,...,3]
-        if opt.arch.posenc:
-            points_enc = self.positional_encoding(opt,coord_2D,L=opt.arch.posenc.L_2D)
-            points_enc = torch.cat([coord_2D,points_enc],dim=-1) # [B,...,6L+3]
-        else: points_enc = coord_2D
-        feat = points_enc
-        # extract implicit features
-        for li,layer in enumerate(self.mlp):
-            if li in opt.arch.skip: feat = torch.cat([feat,points_enc],dim=-1)
-            feat = layer(feat)
-            if li!=len(self.mlp)-1:
-                feat = torch_F.relu(feat)
-        rgb = feat.sigmoid_() # [B,...,3]
-        return rgb
-
-    def positional_encoding(self,opt,input,L): # [B,...,N]
-        shape = input.shape
-        freq = 2**torch.arange(L,dtype=torch.float32,device=opt.device)*np.pi # [L]
-        spectrum = input[...,None]*freq # [B,...,N,L]
-        sin,cos = spectrum.sin(),spectrum.cos() # [B,...,N,L]
-        input_enc = torch.stack([sin,cos],dim=-2) # [B,...,N,2,L]
-        input_enc = input_enc.view(*shape[:-1],-1) # [B,...,2NL]
-        # coarse-to-fine: smoothly mask positional encoding for BARF
-        if opt.barf_c2f is not None:
-            # set weights for different frequency bands
-            start,end = opt.barf_c2f
-            alpha = (self.progress.data-start)/(end-start)*L
-            k = torch.arange(L,dtype=torch.float32,device=opt.device)
-            weight = (1-(alpha-k).clamp_(min=0,max=1).mul_(np.pi).cos_())/2
-            # apply weights
-            shape = input_enc.shape
-            input_enc = (input_enc.view(-1,L)*weight).view(*shape)
-        return input_enc
+        cur_rank = interp_schedule(self.progress, self.c2f_rank)
+        kernel = self.get_kernel()
+        r1_blur  = torch_F.conv1d(self.rank1[:,:cur_rank,:], kernel, 
+            bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
+        r2_blur  = torch_F.conv1d(self.rank2[:,:cur_rank,:], kernel, 
+            bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
+        rbg = torch.sum(r1_blur.unqueeze(2) * r2_blur.unsqueeze(3), dim=1, keepdim=False)
+        assert rbg.shape == (3,self.resolution, self.resolution)
+        return rbg

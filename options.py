@@ -33,7 +33,7 @@ def parse_arguments(args):
         for k in keys_sub[:-1]:
             if k not in opt_sub: opt_sub[k] = {}
             opt_sub = opt_sub[k]
-        assert keys_sub[-1] not in opt_sub,keys_sub[-1]
+        assert keys_sub[-1] not in opt_sub,keys_sub[-1], f"duplicate assign for key {keys_sub.join(".")}")
         opt_sub[keys_sub[-1]] = yaml.safe_load(value)
     opt_cmd = edict(opt_cmd)
     return opt_cmd
