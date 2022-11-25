@@ -1,14 +1,16 @@
 _parent_: options/base.yaml
 
+name: homography_rank:[100]_kernelt:[21,0,0]_iter_9000
+
 arch:                                                       # architectural options
-    resolution: [500,500]
-    max_ranks: 20
+    resolution: [500,500]                                   # W , H of the svd grid
+    max_ranks: 100
     kernel_type: gaussian                                        # kernel can be gaussian or average
-    kernel_size: 11                                        # kerne width should be an odd integer
+    kernel_size: 21                                        # kerne width should be an odd integer
 
 c2f_schedule:                                                   # coarse-to-fine scheduling on positional encoding
-    rank: [20,20]
-    kernel_t: [11, 6, 3, 1, 0.5, 0, 0, 0, 0] 
+    rank: [100]
+    kernel_t: [21 , 0, 0 ] 
 
 data:                                                       # data options
     image_fname: data/cat.jpg                               # path to image file
@@ -18,6 +20,8 @@ data:                                                       # data options
 warp:                                                       # image warping options
     type: homography                                        # type of warp function
     dof: 8                                                  # degrees of freedom of the warp function
+    #type: translation                                        # type of warp function
+    #dof: 2                                                  # degrees of freedom of the warp function
     noise_h: 0.1                                            # scale of pre-generated warp perturbation (homography)
     noise_t: 0.2                                            # scale of pre-generated warp perturbation (translation)
     fix_first: true                                         # fix the first patch for uniqueness of solution
@@ -30,7 +34,7 @@ optim:                                                      # optimization optio
     lr_warp: 1.e-3                                          # learning rate of warp parameters
 
 batch_size: 5                                               # batch size (set to number of patches to consider)
-max_iter: 5000                                              # train to maximum number of iterations
+max_iter: 9000                                              # train to maximum number of iterations
 
 visdom:                                                     # Visdom options (turned off)
 
