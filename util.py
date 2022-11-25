@@ -193,5 +193,17 @@ def colorcode_to_number(code):
 def interp_schedule(x, schedule, left=0, right=1):
     # linear interprete between a list of schedule values 
     assert left <= x and right >= x
+    if isinstance(schedule, torch.Tensor) and schedule.device != torch.device("cpu"):
+        schedule = schedule.cpu().detach().numpy()
+    if isinstance(x, torch.Tensor) and x.device != torch.device("cpu"):
+        x = x.cpu().detach().numpy()
     xs = np.linspace(left, right, len(schedule))
     return np.interp(x, xs, schedule)
+
+def gpu_memory_usage(x):
+    if isinstance(x, torch.Tensor) and x.device != torch.device("cpu"):
+        return x.element_size() * x.nelement()
+    elif isinstance(x, torch.nn.Module):
+        return sum(list(map(gpu_memory_usage, x.children()))) + sum(list(map(gpu_memory_usage, x.parameters())))
+    else: 
+        return 0

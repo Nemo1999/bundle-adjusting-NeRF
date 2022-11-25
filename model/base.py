@@ -39,6 +39,7 @@ class Model():
     def setup_optimizer(self,opt):
         log.info("setting up optimizers...")
         optimizer = getattr(torch.optim,opt.optim.algo)
+        ic(self.graph.parameter())
         self.optim = optimizer([dict(params=self.graph.parameters(),lr=opt.optim.lr)])
         # set up scheduler
         if opt.optim.sched:
