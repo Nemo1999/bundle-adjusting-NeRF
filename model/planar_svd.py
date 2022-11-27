@@ -68,7 +68,7 @@ class SVDImageFunction(torch.nn.Module):
         self.define_network(self.resolution, self.max_ranks)
         # use Parameter so it could be checkpointed
         self.progress = torch.nn.Parameter(torch.tensor(0.))
-
+    @torch.no_grad()
     def get_gaussian_kernel(self, t, kernel_size: int):
         # when t=0, the returned kernel is a impulse function
         assert kernel_size % 2 == 1 and kernel_size > 0
@@ -76,6 +76,18 @@ class SVDImageFunction(torch.nn.Module):
         kernel = math.exp(-t) * scipy.special.iv(ns, t)
         return torch.tensor(kernel).float()
 
+    def get_gaussian_diff_kernel(self, t, kernel_size: int):
+        if hasattr(self,"gaussian_diff_kernel_sigma"):
+            sigma = self.gaussian_diff_kernel_sigma 
+        else:
+            # create and return the parater used as sigma.
+            sigma = torch.tensor(t).to(self.device)
+        ns =torch.arange(-(kernel_size//2), kernel_size//2+1).to(self.device)
+        exponent = - 0.5 * (ns / max(sigma,0.1)) * (ns / max(sigma,0.1))
+        kernel = 1/max(sigma*math.sqrt(2*math.pi), 1) * torch.exp(exponent)
+        return kernel.to(torch.float), sigma.to(torch.float)
+
+    @torch.no_grad()        
     def get_average_kernel(self, t, kernel_size: int):
         # to be consistent with gaussian kernel
         # we should return impulse when t = 0
@@ -89,9 +101,12 @@ class SVDImageFunction(torch.nn.Module):
         t = interp_schedule(self.progress, self.c2f_kernel)
         if self.kernel_type == "gaussian":
             kernel = self.get_gaussian_kernel(t, self.kernel_size)
-        else:
-            assert self.kernel_type == "average"
-            kernel = self.get_average_kernel(t, self.kernel_size)
+        elif self.kernel_type == "average":
+            kernel =  self.get_average_kernel(t, self.kernel_size)
+        elif self.kernel_type == "gaussian_diff":
+            kernel, _ = self.get_gaussian_diff_kernel(t, self.kernel_size)
+        else: 
+            raise ValueError(f"invalid kernel type at \"{self.kernel_type}\"")
         return kernel.to(self.device)
 
     def define_network(self, resolution, max_rank):
@@ -101,6 +116,12 @@ class SVDImageFunction(torch.nn.Module):
         rank2 = torch.normal(rank2, 0.1)
         self.register_parameter(name='rank1', param=torch.nn.Parameter(rank1))
         self.register_parameter(name='rank2', param=torch.nn.Parameter(rank2))
+        # register kernel if it is differentialble
+        if self.kernel_type == "gaussian_diff":
+            t = interp_schedule(0, self.c2f_kernel)
+            # register sigma as differentiable parameter
+            kernel, sigma, = self.get_gaussian_diff_kernel(t, self.kernel_size)
+            self.register_parameter(name='gaussian_diff_kernel_sigma', param=torch.nn.Parameter(sigma.to(self.device)))
 
     def forward(self, opt, coord_2D):  # [B,...,3]
         cur_rank = int(interp_schedule(self.progress, self.c2f_rank))

@@ -1,11 +1,11 @@
 _parent_: options/base.yaml
 
-name: homography_rank:[100]_kernelt:[21,0,0]_iter_9000
+name: gaussian_diff
 
 arch:                                                       # architectural options
     resolution: [500,500]                                   # W , H of the svd grid
     max_ranks: 100
-    kernel_type: gaussian                                        # kernel can be gaussian or average
+    kernel_type: gaussian_diff                                        # kernel can be gaussian or average
     kernel_size: 21                                        # kerne width should be an odd integer
 
 c2f_schedule:                                                   # coarse-to-fine scheduling on positional encoding
