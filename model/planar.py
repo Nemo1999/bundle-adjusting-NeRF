@@ -172,7 +172,7 @@ class Model(base.Model):
             util_vis.tb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
             util_vis.tb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
         
-        if opt.tb and opt.tb.log_jacobian: 
+        if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
             # visualize jacobian with respect to homography and translation
             trans_grad_img, homo_grad_img = self.graph.pose2image_jacobian(opt)
             trans_range = (min(trans_grad_img), max(trans_grad_img))

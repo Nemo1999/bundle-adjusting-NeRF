@@ -127,6 +127,7 @@ class Model():
         self.timer.it_end = time.time()
         util.update_timer(opt,self.timer,self.ep,len(loader))
         return loss
+     
 
     def summarize_loss(self,opt,var,loss):
         loss_all = 0.
@@ -134,7 +135,7 @@ class Model():
         # weigh losses
         for key in loss:
             assert(key in opt.loss_weight)
-            assert(loss[key].shape==())
+            assert(loss[key].shape==()), f"loss \"{key}\" has shape {loss[key].shape}"
             if opt.loss_weight[key] is not None:
                 assert not torch.isinf(loss[key]),"loss {} is Inf".format(key)
                 assert not torch.isnan(loss[key]),"loss {} is NaN".format(key)
