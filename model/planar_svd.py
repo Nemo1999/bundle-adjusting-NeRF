@@ -10,6 +10,8 @@ import scipy
 import numpy as np
 from typing import Tuple
 from icecream import ic
+import camera 
+from warp import lie
 
 # training cycle is same as planar
 
@@ -17,6 +19,11 @@ from icecream import ic
 class Model(planar.Model):
     def __init__(self, opt):
         super().__init__(opt)
+    def log_scalars(self, opt, var, loss, metric=None, step=0, split="train"):
+        super().log_scalars(opt, var, loss, metric, step, split)
+        if opt.arch.kernel_type == "gaussian_diff":
+            sigma = self.graph.neural_image.gaussian_diff_kernel_sigma
+            self.tb.add_scalar(f"{split}/{'gaussian_kernel_std'}", sigma , step)
 
 # ============================ computation graph for forward/backprop ============================
 
@@ -26,6 +33,7 @@ class Graph(base.Graph):
     def __init__(self, opt):
         super().__init__(opt)
         self.neural_image = SVDImageFunction(opt)
+        self.device = torch.device("cpu" if opt.cpu else f"cuda:{opt.gpu}")
 
     def forward(self, opt, var, mode=None):
         xy_grid = warp.get_normalized_pixel_grid_crop(opt)
@@ -47,7 +55,38 @@ class Graph(base.Graph):
             loss.render = self.MSE_loss(var.rgb_warped, image_pert)
 
         return loss
+    
+    def render_pose2image(self, xy_translation, homography_param, opt=None):
+        # render with additional xy_translation or homography parameter
+        #xy_translation, homography_param = pose_perterb
+        xy_grid = warp.get_normalized_pixel_grid(opt)[:1] # only use 1 grid instead of opt.batch_size
+        # translate grid 
+        xy_grid += xy_translation
+        # convert homo parameter to homo matrix using lie 
+        warp_matrix = lie.sl3_to_SL3(homography_param)
+        # warp grid using homography matrix
+        xy_grid_hom = camera.to_hom(xy_grid)
+        warped_grid_hom = xy_grid_hom@warp_matrix.transpose(-2,-1)
+        warped_grid = warped_grid_hom[...,:2]/(warped_grid_hom[...,2:]+1e-8) # [B,HW,2]
+        # predict rgb image
+        rgb_whole = self.neural_image.forward(opt, warped_grid)
+        rgb_whole = rgb_whole.view(opt.H, opt.W, 3).permute(2,0,1)
+        return rgb_whole
 
+    def pose2image_jacobian(self, opt):
+        # function from warp_pert parameters to image
+        trans_img, homo_img = torch.autograd.functional.jacobian(
+            lambda t,h: self.render_pose2image(t,h, opt=opt), 
+            (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
+            create_graph=False,
+            strict = False,
+            vectorize=True,
+            strategy="forward-mode")
+        # trans_img now have shape (2, H*W*3)
+        assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
+        trans_img = trans_img.permute(3, 0, 1, 2)
+        homo_img = homo_img.permute(3, 0, 1, 2) 
+        return trans_img, homo_img
 
 class SVDImageFunction(torch.nn.Module):
 

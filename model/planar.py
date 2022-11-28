@@ -15,6 +15,9 @@ from util import log,debug
 from . import base
 import warp
 from icecream import ic
+from warp import lie
+import functools
+import camera
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -168,7 +171,17 @@ class Model(base.Model):
             util_vis.tb_image(opt,self.tb,self.it+1,"train","image_boxes",frame[None])
             util_vis.tb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
             util_vis.tb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
+        
+        if opt.tb and opt.tb.log_jacobian: 
+            # visualize jacobian with respect to homography and translation
+            trans_grad_img, homo_grad_img = self.graph.pose2image_jacobian(opt)
+            trans_range = (min(trans_grad_img), max(trans_grad_img))
+            homo_range = (min(homo_grad_img), max(homo_grad_img))
+            util_vis.tb_image(opt,self.tb,self.it+1, "diff_translation", trans_grad_img, num_vis=2, from_range=trans_range, cmap="viridis")
+            util_vis.tb_image(opt,self.tb,self.it+1, "diff_homography", homo_grad_img, num_vis=4, from_range=homo_range, cmap="viridis")
 
+            
+            
 # ============================ computation graph for forward/backprop ============================
 
 class Graph(base.Graph):
@@ -191,6 +204,38 @@ class Graph(base.Graph):
             image_pert = var.image_pert.view(opt.batch_size,3,opt.H_crop*opt.W_crop).permute(0,2,1)
             loss.render = self.MSE_loss(var.rgb_warped,image_pert)
         return loss
+
+    def render_pose2image(self, xy_translation, homography_param, opt=None):
+        # render with additional xy_translation or homography parameter
+        #xy_translation, homography_param = pose_perterb
+        xy_grid = warp.get_normalized_pixel_grid(opt)[:1] # only use 1 grid instead of opt.batch_size
+        # translate grid 
+        xy_grid += xy_translation
+        # convert homo parameter to homo matrix using lie 
+        warp_matrix = lie.sl3_to_SL3(homography_param)
+        # warp grid using homography matrix
+        xy_grid_hom = camera.to_hom(xy_grid)
+        warped_grid_hom = xy_grid_hom@warp_matrix.transpose(-2,-1)
+        warped_grid = warped_grid_hom[...,:2]/(warped_grid_hom[...,2:]+1e-8) # [B,HW,2]
+        # predict rgb image
+        rgb_whole = self.neural_image.forward(opt, warped_grid)
+        rgb_whole = rgb_whole.view(opt.H, opt.W, 3).permute(2,0,1)
+        return rgb_whole
+
+    def pose2image_jacobian(self, opt):
+        # function from warp_pert parameters to image
+        trans_img, homo_img = torch.autograd.functional.jacobian(
+            lambda t,h: self.render_pose2image(t,h, opt=opt), 
+            (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
+            create_graph=False,
+            strict = False,
+            vectorize=True,
+            strategy="forward-mode")
+        # trans_img now have shape (2, H*W*3)
+        assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
+        trans_img = trans_img.permute(3, 0, 1, 2)
+        homo_img = homo_img.permute(3, 0, 1, 2) 
+        return trans_img, homo_img
 
 class NeuralImageFunction(torch.nn.Module):
 
