@@ -53,7 +53,7 @@ class Graph(base.Graph):
             #ic(image_pert.shape)
             #ic(var.rgb_warped.shape)
             loss.render = self.MSE_loss(var.rgb_warped, image_pert)
-
+            loss.total_variance = self.TV_loss(self.neural_image)
         return loss
     
     def render_pose2image(self, xy_translation, homography_param, opt=None):
@@ -87,6 +87,22 @@ class Graph(base.Graph):
         trans_img = trans_img.permute(3, 0, 1, 2)
         homo_img = homo_img.permute(3, 0, 1, 2) 
         return trans_img, homo_img
+    
+    def TV_loss(self, svdImage):
+        # Total Variance Loss
+        r1, r2 = svdImage.rank1, svdImage.rank2
+        
+        N1 = svdImage.resolution[0] * svdImage.max_ranks
+        tv1 = (r1[...,1:] - r1[...,:-1])
+        tv1 = tv1 * tv1
+        tv1 = torch.sum(tv1) / N1
+        N2 = svdImage.resolution[1] * svdImage.max_ranks
+        tv2 = (r2[...,1:] - r2[...,:-1])
+        tv2 = tv2 * tv2
+        tv2 = torch.sum(tv2) / N2
+
+        return tv1 + tv2
+
 
 class SVDImageFunction(torch.nn.Module):
 
@@ -104,7 +120,7 @@ class SVDImageFunction(torch.nn.Module):
         self.c2f_kernel = opt.c2f_schedule.kernel_t
         self.c2f_rank = opt.c2f_schedule.rank
 
-        self.define_network(self.resolution, self.max_ranks)
+        self.define_network()
         # use Parameter so it could be checkpointed
         self.progress = torch.nn.Parameter(torch.tensor(0.))
     @torch.no_grad()
@@ -148,11 +164,11 @@ class SVDImageFunction(torch.nn.Module):
             raise ValueError(f"invalid kernel type at \"{self.kernel_type}\"")
         return kernel.to(self.device)
 
-    def define_network(self, resolution, max_rank):
+    def define_network(self):
         rank1 = torch.zeros(3, self.max_ranks, self.resolution[0])
-        rank1 = torch.normal(rank1, 0.1)
+        rank1 = torch.abs(torch.normal(rank1, 0.1))
         rank2 = torch.zeros(3, self.max_ranks, self.resolution[1])
-        rank2 = torch.normal(rank2, 0.1)
+        rank2 = torch.abs(torch.normal(rank2, 0.1))
         self.register_parameter(name='rank1', param=torch.nn.Parameter(rank1))
         self.register_parameter(name='rank2', param=torch.nn.Parameter(rank2))
         # register kernel if it is differentialble
