@@ -36,7 +36,7 @@ optim:                                                      # optimization optio
     lr_warp: 1.e-3                                          # learning rate of warp parameters
 
 batch_size: 5                                               # batch size (set to number of patches to consider)
-max_iter: 9000                                              # train to maximum number of iterations
+max_iter: 15000                                              # train to maximum number of iterations
 
 visdom:                                                     # Visdom options (turned off)
 
