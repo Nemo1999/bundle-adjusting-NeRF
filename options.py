@@ -119,7 +119,7 @@ def save_options_file(opt):
             os.system("rm {}".format(opt_new_fname))
             override = None
             while override not in ["y","n"]:
-                override = input("override? (y/n) ")
+                override = input("override? (y/n)" )
             if override=="n":
                 print("safe exiting...")
                 exit()

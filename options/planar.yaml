@@ -13,6 +13,8 @@ data:                                                       # data options
     image_size: [360,480]                                   # original image size
     patch_crop: [180,180]                                   # crop size of image patches to align
 
+tb:
+    log_jacobian: false                                    #  log jacobian image with respect to each homgraphy parameter, grid_sample is not supported yet
 warp:                                                       # image warping options
     type: homography                                        # type of warp function
     dof: 8                                                  # degrees of freedom of the warp function
@@ -28,7 +30,7 @@ optim:                                                      # optimization optio
     lr_warp: 1.e-3                                          # learning rate of warp parameters
 
 batch_size: 5                                               # batch size (set to number of patches to consider)
-max_iter: 5000                                              # train to maximum number of iterations
+max_iter: 15000                                          # train to maximum number of iterations
 
 visdom:                                                     # Visdom options (turned off)
 

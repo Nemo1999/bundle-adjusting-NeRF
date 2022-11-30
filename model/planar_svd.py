@@ -28,65 +28,19 @@ class Model(planar.Model):
 # ============================ computation graph for forward/backprop ============================
 
 
-class Graph(base.Graph):
+class Graph(planar.Graph):
 
     def __init__(self, opt):
         super().__init__(opt)
-        self.neural_image = SVDImageFunction(opt)
-        self.device = torch.device("cpu" if opt.cpu else f"cuda:{opt.gpu}")
-
-    def forward(self, opt, var, mode=None):
-        xy_grid = warp.get_normalized_pixel_grid_crop(opt)
-        xy_grid_warped = warp.warp_grid(opt, xy_grid, self.warp_param.weight)
-        # render images
-        var.rgb_warped = self.neural_image.forward(
-            opt, xy_grid_warped)  # [B,HW,3]
-        var.rgb_warped_map = var.rgb_warped.view(
-            opt.batch_size, opt.H_crop, opt.W_crop, 3).permute(0, 3, 1, 2)  # [B,3,H,W]
-        return var
-
     def compute_loss(self, opt, var, mode=None):
         loss = edict()
         if opt.loss_weight.render is not None:
             image_pert = var.image_pert.view(
                 opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
-            #ic(image_pert.shape)
-            #ic(var.rgb_warped.shape)
             loss.render = self.MSE_loss(var.rgb_warped, image_pert)
+        if opt.loss_weight.total_variance is not None:
             loss.total_variance = self.TV_loss(self.neural_image)
         return loss
-    
-    def render_pose2image(self, xy_translation, homography_param, opt=None):
-        # render with additional xy_translation or homography parameter
-        #xy_translation, homography_param = pose_perterb
-        xy_grid = warp.get_normalized_pixel_grid(opt)[:1] # only use 1 grid instead of opt.batch_size
-        # translate grid 
-        xy_grid += xy_translation
-        # convert homo parameter to homo matrix using lie 
-        warp_matrix = lie.sl3_to_SL3(homography_param)
-        # warp grid using homography matrix
-        xy_grid_hom = camera.to_hom(xy_grid)
-        warped_grid_hom = xy_grid_hom@warp_matrix.transpose(-2,-1)
-        warped_grid = warped_grid_hom[...,:2]/(warped_grid_hom[...,2:]+1e-8) # [B,HW,2]
-        # predict rgb image
-        rgb_whole = self.neural_image.forward(opt, warped_grid)
-        rgb_whole = rgb_whole.view(opt.H, opt.W, 3).permute(2,0,1)
-        return rgb_whole
-
-    def pose2image_jacobian(self, opt):
-        # function from warp_pert parameters to image
-        trans_img, homo_img = torch.autograd.functional.jacobian(
-            lambda t,h: self.render_pose2image(t,h, opt=opt), 
-            (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
-            create_graph=False,
-            strict = False,
-            vectorize=True,
-            strategy="forward-mode")
-        # trans_img now have shape (2, H*W*3)
-        assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
-        trans_img = trans_img.permute(3, 0, 1, 2)
-        homo_img = homo_img.permute(3, 0, 1, 2) 
-        return trans_img, homo_img
     
     def TV_loss(self, svdImage):
         # Total Variance Loss
@@ -104,7 +58,7 @@ class Graph(base.Graph):
         return tv1 + tv2
 
 
-class SVDImageFunction(torch.nn.Module):
+class NeuralImageFunction(torch.nn.Module):
 
     def __init__(self, opt):
         super().__init__()

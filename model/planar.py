@@ -18,6 +18,7 @@ from icecream import ic
 from warp import lie
 import functools
 import camera
+import importlib
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -175,6 +176,8 @@ class Model(base.Model):
         if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
             # visualize jacobian with respect to homography and translation
             trans_grad_img, homo_grad_img = self.graph.pose2image_jacobian(opt)
+            ic()
+            ic(trans_grad_img)
             trans_range = (min(trans_grad_img), max(trans_grad_img))
             homo_range = (min(homo_grad_img), max(homo_grad_img))
             util_vis.tb_image(opt,self.tb,self.it+1, "diff_translation", trans_grad_img, num_vis=2, from_range=trans_range, cmap="viridis")
@@ -186,9 +189,12 @@ class Model(base.Model):
 
 class Graph(base.Graph):
 
-    def __init__(self,opt):
+    def __init__(self,opt, ):
         super().__init__(opt)
-        self.neural_image = NeuralImageFunction(opt)
+        module = importlib.import_module("model.{}".format(opt.model))
+        log.info("building graph...")
+        self.neural_image = module.NeuralImageFunction(opt).to(opt.device)
+        self.device = torch.device("cpu" if opt.cpu else f"cuda:{opt.gpu}")
 
     def forward(self,opt,var,mode=None):
         xy_grid = warp.get_normalized_pixel_grid_crop(opt)
@@ -229,8 +235,8 @@ class Graph(base.Graph):
             (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
             create_graph=False,
             strict = False,
-            vectorize=True,
-            strategy="forward-mode")
+            vectorize=True,)
+            #strategy="forward-mode")
         # trans_img now have shape (2, H*W*3)
         assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
         trans_img = trans_img.permute(3, 0, 1, 2)
