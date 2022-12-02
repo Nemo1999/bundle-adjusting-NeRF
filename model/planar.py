@@ -176,12 +176,10 @@ class Model(base.Model):
         if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
             # visualize jacobian with respect to homography and translation
             trans_grad_img, homo_grad_img = self.graph.pose2image_jacobian(opt)
-            ic()
-            ic(trans_grad_img)
-            trans_range = (min(trans_grad_img), max(trans_grad_img))
-            homo_range = (min(homo_grad_img), max(homo_grad_img))
-            util_vis.tb_image(opt,self.tb,self.it+1, "diff_translation", trans_grad_img, num_vis=2, from_range=trans_range, cmap="viridis")
-            util_vis.tb_image(opt,self.tb,self.it+1, "diff_homography", homo_grad_img, num_vis=4, from_range=homo_range, cmap="viridis")
+            trans_range = (torch.min(trans_grad_img).item(), torch.max(trans_grad_img).item())
+            homo_range = (torch.min(homo_grad_img).item(), torch.max(homo_grad_img).item())
+            util_vis.tb_image(opt,self.tb,self.it+1,"train", "diff_translation", trans_grad_img, num_vis=(1,2), from_range=trans_range, cmap="viridis")
+            util_vis.tb_image(opt,self.tb,self.it+1,"train", "diff_homography", homo_grad_img, num_vis=(2,4), from_range=homo_range, cmap="viridis")
 
             
             
@@ -235,8 +233,8 @@ class Graph(base.Graph):
             (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
             create_graph=False,
             strict = False,
-            vectorize=True,)
-            #strategy="forward-mode")
+            vectorize=True,
+            strategy="forward-mode")
         # trans_img now have shape (2, H*W*3)
         assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
         trans_img = trans_img.permute(3, 0, 1, 2)
