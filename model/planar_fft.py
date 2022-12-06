@@ -39,23 +39,12 @@ class Graph(planar.Graph):
                 opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
             loss.render = self.MSE_loss(var.rgb_warped, image_pert)
         if opt.loss_weight.total_variance is not None:
-            loss.total_variance = self.TV_loss(self.neural_image)
+            loss.total_variance = self.Parseval_Loss(self.neural_image)
         return loss
     
-    def TV_loss(self, svdImage):
-        # Total Variance Loss
-        r1, r2 = svdImage.rank1, svdImage.rank2
-        
-        N1 = svdImage.resolution[0] * svdImage.max_ranks
-        tv1 = (r1[...,1:] - r1[...,:-1])
-        tv1 = tv1 * tv1
-        tv1 = torch.sum(tv1) / N1
-        N2 = svdImage.resolution[1] * svdImage.max_ranks
-        tv2 = (r2[...,1:] - r2[...,:-1])
-        tv2 = tv2 * tv2
-        tv2 = torch.sum(tv2) / N2
-
-        return tv1 + tv2
+    def Parseval_Loss(self, svdImage):
+        # ParseVal Loss in PREF (similar to TV loss in spatial domain)
+        return svdImage.Parseval_Loss()
 
 
 class NeuralImageFunction(torch.nn.Module):
@@ -66,13 +55,29 @@ class NeuralImageFunction(torch.nn.Module):
         # arch options
         self.kernel_type = opt.arch.kernel_type
         self.kernel_size = opt.arch.kernel_size
-        self.resolution = opt.arch.resolution # W, H
-        self.max_ranks = opt.arch.max_ranks
+        self.resolution = opt.arch.resolution # H W
+        self.H, self.W = self.resolution[0], self.resolution[1]
+        
+        # PREF setting for 3D
+        """
+        self.max_ranks = list(map( lambda x: math.floor(math.log2(x))+1 , self.resolution))
+        self.freqs_h = torch.tensor([0] + [2**i for i in range(self.max_ranks[0]-1)])
+        self.freqs_w = torch.tensor([0] + [2**i for i in range(self.max_ranks[1]-1)])
+        """
+        # PREF setting for 2D
+        self.max_ranks = self.resolution[0]//5, self.resolution[1]//5
+        self.freqs_h = torch.arange(0,self.max_ranks[0])
+        self.freqs_w = torch.arange(0,self.max_ranks[1])
 
         self.device = torch.device("cpu" if opt.cpu else f"cuda:{opt.gpu}")
         # c2f_schedule options
         self.c2f_kernel = opt.c2f_schedule.kernel_t
         self.c2f_rank = opt.c2f_schedule.rank
+
+        self.basis_h = torch.stack(list(torch.exp(2j*3.141592*f/self.H * torch.arange(0,self.H)) for f in self.freqs_h)).unsqueeze(0).unsqueeze(3).expand(3,-1,-1,self.W) #3, self.max_ranks[0], H, W
+        self.basis_w = torch.stack(list(torch.exp(2j*3.141592*f/self.W * torch.arange(0,self.W)) for f in self.freqs_w)).unsqueeze(0).unsqueeze(2).expand(3,-1,self.H,-1) #3, self.max_ranks[1], H, W
+        self.basis_h = self.basis_h.to(self.device)
+        self.basis_w = self.basis_w.to(self.device)
 
         self.define_network()
         # use Parameter so it could be checkpointed
@@ -119,10 +124,12 @@ class NeuralImageFunction(torch.nn.Module):
         return kernel.to(self.device)
 
     def define_network(self):
-        rank1 = torch.zeros(3, self.max_ranks, self.resolution[0])
-        rank1 = torch.abs(torch.normal(rank1, 0.1))
-        rank2 = torch.zeros(3, self.max_ranks, self.resolution[1])
-        rank2 = torch.abs(torch.normal(rank2, 0.1))
+        shape1 = (3,self.max_ranks[0], self.resolution[1])
+        rank1 = torch.complex(torch.zeros(*shape1), torch.zeros(*shape1))
+        
+        shape2 = (3, self.max_ranks[1], self.resolution[0])
+        rank2 = torch.complex(torch.zeros(*shape2), torch.zeros(*shape2))
+        
         self.register_parameter(name='rank1', param=torch.nn.Parameter(rank1))
         self.register_parameter(name='rank2', param=torch.nn.Parameter(rank2))
         # register kernel if it is differentialble
@@ -134,19 +141,28 @@ class NeuralImageFunction(torch.nn.Module):
 
     def forward(self, opt, coord_2D):  # [B,...,3]
         cur_rank = int(interp_schedule(self.progress, self.c2f_rank))
+        cur_rank1 = min(cur_rank, self.max_ranks[0]) 
+        cur_rank2 = min(cur_rank, self.max_ranks[1])
         
-        kernel = self.get_kernel().expand(cur_rank, 1, -1)
-        
+        rank1_ifft = torch.fft.fft(self.rank1[:, :cur_rank1,:], dim=2) # 3, cur_rank1, self.resolution[1]
+        rank2_ifft = torch.fft.fft(self.rank2[:, :cur_rank2,:], dim=2) # 3, cur_rank2, self.resolution[0] 
 
-        r1_blur = torch_F.conv1d(self.rank1[:, :cur_rank, :], kernel,
-                                 bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
-        r2_blur = torch_F.conv1d(self.rank2[:, :cur_rank, :], kernel,
-                                 bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
+        if self.kernel_type != "none":
+            kernel = self.get_kernel()
+            complex_kernel = torch.complex(kernel, kernel)
+
+            rank1_ifft = torch_F.conv1d(rank1_ifft[:, :, :], complex_kernel.expand(cur_rank1, 1, -1),
+                                 bias=None, stride=1, padding="same", dilation=1, groups=cur_rank1)
+            rank2_ifft = torch_F.conv1d(rank2_ifft[:, :, :], complex_kernel.expand(cur_rank1, 1, -1),
+                                 bias=None, stride=1, padding="same", dilation=1, groups=cur_rank2)
+
+        img1 = torch.sum(rank1_ifft.unsqueeze(2) * self.basis_h[:,:cur_rank1, ...], dim=1, keepdim=False)
+        img2 = torch.sum(rank2_ifft.unsqueeze(3) * self.basis_w[:,:cur_rank2, ...], dim=1, keepdim=False)
        
-        rbg = torch.sum(r1_blur.unsqueeze(
-            2) * r2_blur.unsqueeze(3), dim=1, keepdim=False)
+        rbg = torch.real(img1) + torch.real(img2)
+        rbg *= 255
         assert rbg.shape == (
-            3, self.resolution[1], self.resolution[0]), f"rbg image has shape {rbg.shape}"
+            3, self.resolution[0], self.resolution[1]), f"rbg image has shape {rbg.shape}"
         B = coord_2D.shape[0]
         #ic(coord_2D)
         # coord_2D += 0.5
@@ -158,3 +174,11 @@ class NeuralImageFunction(torch.nn.Module):
         #ic(coord_2D[0][0])
         #ic(sampled_rbg.shape)
         return sampled_rbg.permute(0, 2, 1)
+    def Parseval_Loss(self):
+        r1_v = torch.arange(0,self.W)[None,None,...].to(self.device) * self.rank1
+        r1_u = self.freqs_h[None, ... , None].to(self.device) * self.rank1
+
+        r2_v = torch.arange(0,self.H)[None,None,...].to(self.device) * self.rank2
+        r2_u = self.freqs_w[None, ... , None].to(self.device) * self.rank2
+
+        return sum(torch.linalg.norm(r) for r in [r1_v, r1_u, r2_v, r2_u])
