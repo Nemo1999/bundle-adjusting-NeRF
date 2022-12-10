@@ -2,9 +2,10 @@ import numpy as np
 import os,sys,time
 import torch
 import importlib
-
+import wandb
 import options
 from util import log
+
 
 def main():
 
@@ -14,6 +15,15 @@ def main():
     opt_cmd = options.parse_arguments(sys.argv[1:])
     opt = options.set(opt_cmd=opt_cmd)
     options.save_options_file(opt)
+
+    wandb.init(
+        project="Planar Experiments",
+        notes=f"planar run: model={opt.model}, name={opt.name}, yaml={opt.yaml}",
+        tags=["planar", opt.name],
+        config=opt,
+    )
+    wandb.run.name = f"{opt.name}"
+
 
     with torch.cuda.device(opt.device):
 

@@ -9,11 +9,11 @@ from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 import PIL
 import imageio
 from easydict import EasyDict as edict
-
+import wandb
 import camera
 
 @torch.no_grad()
-def tb_image(opt,tb,step,group,name,images,num_vis=None,from_range=(0,1),cmap="gray"):
+def tb_wandb_image(opt,tb,step,group,name,images,num_vis=None,from_range=(0,1),cmap="gray"):
     images = preprocess_vis_image(opt,images,from_range=from_range,cmap=cmap)
     num_H,num_W = num_vis or opt.tb.num_images
     images = images[:num_H*num_W]
@@ -23,6 +23,9 @@ def tb_image(opt,tb,step,group,name,images,num_vis=None,from_range=(0,1),cmap="g
         image_grid = torch.cat([image_grid,mask_grid],dim=0)
     tag = "{0}/{1}".format(group,name)
     tb.add_image(tag,image_grid,step)
+
+    image = wandb.Image(image_grid, caption=f"{group}/{name}")
+    wandb.log({f"{group}.{name}": image}, step=step)
 
 def preprocess_vis_image(opt,images,from_range=(0,1),cmap="gray"):
     min,max = from_range
