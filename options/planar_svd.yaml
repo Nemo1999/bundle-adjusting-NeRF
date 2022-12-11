@@ -4,12 +4,12 @@ _parent_: options/base.yaml
 arch:                                                       # architectural options
     resolution: [500,500]                                   # W , H of the svd grid
     max_ranks: 100
-    kernel_type: gaussian_diff                             # kernel can be gaussian  , diff_gaussian or  average
+    kernel_type: gaussian_diff                             # kernel can be gaussian  , diff_gaussian , combined_diff or  average
     kernel_size: 21                                        # kerne width should be an odd integer
 
 c2f_schedule:                                                   # coarse-to-fine scheduling on positional encoding
     rank: [100]
-    kernel_t: [12,0,0] 
+    kernel_t: [12,0,0]                                      # kernel sigma or t scheduling, provide singleton list to used as initial value for arch.kernel_type= gaussian_diff or combined_diff
 tb:
     log_jacobian: false                                    #  log jacobian image with respect to each homgraphy parameter 
 

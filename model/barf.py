@@ -13,7 +13,7 @@ import util,util_vis
 from util import log,debug
 from . import nerf
 import camera
-
+import wandb
 # ============================ main engine for training and evaluation ============================
 
 class Model(nerf.Model):
@@ -72,6 +72,7 @@ class Model(nerf.Model):
             # log learning rate
             lr = self.optim_pose.param_groups[0]["lr"]
             self.tb.add_scalar("{0}/{1}".format(split,"lr_pose"),lr,step)
+            wandb.log({f"{split}.{'lr_pose'}": lr}, step=step)
         # compute pose error
         if split=="train" and opt.data.dataset in ["blender","llff"]:
             pose,pose_GT = self.get_all_training_poses(opt)
@@ -79,6 +80,8 @@ class Model(nerf.Model):
             error = self.evaluate_camera_alignment(opt,pose_aligned,pose_GT)
             self.tb.add_scalar("{0}/error_R".format(split),error.R.mean(),step)
             self.tb.add_scalar("{0}/error_t".format(split),error.t.mean(),step)
+            wandb.log({f"{split}.{'error_R'}": error.R.mean()}, step=step)
+            wandb.log({f"{split}.{'error_t'}": error.t.mean()}, step=step)
 
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):

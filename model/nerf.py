@@ -14,7 +14,7 @@ import util,util_vis
 from util import log,debug
 from . import base
 import camera
-
+import wandb
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -75,32 +75,36 @@ class Model(base.Model):
         if split=="train":
             lr = self.optim.param_groups[0]["lr"]
             self.tb.add_scalar("{0}/{1}".format(split,"lr"),lr,step)
+            wandb.log({f"{split}.{'lr'}": lr}, step=step)
             if opt.nerf.fine_sampling:
                 lr = self.optim.param_groups[1]["lr"]
                 self.tb.add_scalar("{0}/{1}".format(split,"lr_fine"),lr,step)
+                wandb.log({f"{split}.{'lr_fine'}": lr}, step=step)
         # compute PSNR
         psnr = -10*loss.render.log10()
         self.tb.add_scalar("{0}/{1}".format(split,"PSNR"),psnr,step)
+        wandb.log({f"{split}.{'PSNR'}": psnr}, step=step)
         if opt.nerf.fine_sampling:
             psnr = -10*loss.render_fine.log10()
             self.tb.add_scalar("{0}/{1}".format(split,"PSNR_fine"),psnr,step)
+            wandb.log({f"{split}.{'PSNR_fine'}": psnr}, step=step)
 
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train",eps=1e-10):
         if opt.tb:
-            util_vis.tb_image(opt,self.tb,step,split,"image",var.image)
+            util_vis.tb_wandb_image(opt,self.tb,step,split,"image",var.image)
             if not opt.nerf.rand_rays or split!="train":
                 invdepth = (1-var.depth)/var.opacity if opt.camera.ndc else 1/(var.depth/var.opacity+eps)
                 rgb_map = var.rgb.view(-1,opt.H,opt.W,3).permute(0,3,1,2) # [B,3,H,W]
                 invdepth_map = invdepth.view(-1,opt.H,opt.W,1).permute(0,3,1,2) # [B,1,H,W]
-                util_vis.tb_image(opt,self.tb,step,split,"rgb",rgb_map)
-                util_vis.tb_image(opt,self.tb,step,split,"invdepth",invdepth_map)
+                util_vis.tb_wandb_image(opt,self.tb,step,split,"rgb",rgb_map)
+                util_vis.tb_wandb_image(opt,self.tb,step,split,"invdepth",invdepth_map)
                 if opt.nerf.fine_sampling:
                     invdepth = (1-var.depth_fine)/var.opacity_fine if opt.camera.ndc else 1/(var.depth_fine/var.opacity_fine+eps)
                     rgb_map = var.rgb_fine.view(-1,opt.H,opt.W,3).permute(0,3,1,2) # [B,3,H,W]
                     invdepth_map = invdepth.view(-1,opt.H,opt.W,1).permute(0,3,1,2) # [B,1,H,W]
-                    util_vis.tb_image(opt,self.tb,step,split,"rgb_fine",rgb_map)
-                    util_vis.tb_image(opt,self.tb,step,split,"invdepth_fine",invdepth_map)
+                    util_vis.tb_wandb_image(opt,self.tb,step,split,"rgb_fine",rgb_map)
+                    util_vis.tb_wandb_image(opt,self.tb,step,split,"invdepth_fine",invdepth_map)
 
     @torch.no_grad()
     def get_all_training_poses(self,opt):

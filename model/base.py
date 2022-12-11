@@ -12,7 +12,7 @@ from easydict import EasyDict as edict
 
 import util,util_vis
 from util import log,debug
-
+import wandb
 # ============================ main engine for training and evaluation ============================
 
 class Model():
@@ -169,10 +169,13 @@ class Model():
             if key=="all": continue
             if opt.loss_weight[key] is not None:
                 self.tb.add_scalar("{0}/loss_{1}".format(split,key),value,step)
+        wandb.log(loss, step=step)
+
         if metric is not None:
             for key,value in metric.items():
                 self.tb.add_scalar("{0}/{1}".format(split,key),value,step)
-
+            wandb.log(metric, step=step)
+        
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):
         raise NotImplementedError

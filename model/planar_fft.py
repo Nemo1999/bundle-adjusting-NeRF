@@ -12,7 +12,7 @@ from typing import Tuple
 from icecream import ic
 import camera 
 from warp import lie
-
+import wandb
 # training cycle is same as planar
 
 
@@ -21,9 +21,10 @@ class Model(planar.Model):
         super().__init__(opt)
     def log_scalars(self, opt, var, loss, metric=None, step=0, split="train"):
         super().log_scalars(opt, var, loss, metric, step, split)
-        if opt.arch.kernel_type == "gaussian_diff":
+        if opt.arch.kernel_type  == "gaussian_diff":
             sigma = self.graph.neural_image.gaussian_diff_kernel_sigma
             self.tb.add_scalar(f"{split}/{'gaussian_kernel_std'}", sigma , step)
+            wandb.log({f"{split}.{'gaussian_kernel_std'}": sigma}, step=step)
 
 # ============================ computation graph for forward/backprop ============================
 

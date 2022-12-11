@@ -19,6 +19,7 @@ from warp import lie
 import functools
 import camera
 import importlib
+import wandb
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -151,9 +152,11 @@ class Model(base.Model):
         # compute PSNR
         psnr = -10*loss.render.log10()
         self.tb.add_scalar("{0}/{1}".format(split,"PSNR"),psnr,step)
+        wandb.log({f"{split}.{'PSNR'}": psnr}, step=step)
         # warp error
         warp_error = (self.graph.warp_param.weight-self.warp_pert).norm(dim=-1).mean()
         self.tb.add_scalar("{0}/{1}".format(split,"warp error"),warp_error,step)
+        wandb.log({f"{split}.{'warp_error'}": warp_error}, step=step)
 
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):
@@ -167,11 +170,11 @@ class Model(base.Model):
         # visualize in Tensorboard
         if opt.tb:
             colors = self.box_colors
-            util_vis.tb_image(opt,self.tb,step,split,"image_pert",util_vis.color_border(var.image_pert,colors))
-            util_vis.tb_image(opt,self.tb,step,split,"rgb_warped",util_vis.color_border(var.rgb_warped_map,colors))
-            util_vis.tb_image(opt,self.tb,self.it+1,"train","image_boxes",frame[None])
-            util_vis.tb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
-            util_vis.tb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
+            util_vis.tb_wandb_image(opt,self.tb,step,split,"image_pert",util_vis.color_border(var.image_pert,colors))
+            util_vis.tb_wandb_image(opt,self.tb,step,split,"rgb_warped",util_vis.color_border(var.rgb_warped_map,colors))
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_boxes",frame[None])
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
         
         if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
             # visualize jacobian with respect to homography and translation
@@ -181,8 +184,8 @@ class Model(base.Model):
             homo_grad_img = torch.abs(homo_grad_img)
             trans_range = (torch.min(trans_grad_img).item(), torch.max(trans_grad_img).item())
             homo_range = (torch.min(homo_grad_img).item(), torch.max(homo_grad_img).item())
-            util_vis.tb_image(opt,self.tb,self.it+1,"train", "diff_translation", trans_grad_img, num_vis=(1,2), from_range=trans_range, cmap="viridis")
-            util_vis.tb_image(opt,self.tb,self.it+1,"train", "diff_homography", homo_grad_img, num_vis=(2,4), from_range=homo_range, cmap="viridis")
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train", "diff_translation", trans_grad_img, num_vis=(1,2), from_range=trans_range, cmap="viridis")
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train", "diff_homography", homo_grad_img, num_vis=(2,4), from_range=homo_range, cmap="viridis")
 
             
             
@@ -232,12 +235,13 @@ class Graph(base.Graph):
     def pose2image_jacobian(self, opt):
         # function from warp_pert parameters to image
         with torch.no_grad():
+            vectorize = True if opt.model == "planar" else False # only use vectorize on planar model to avoid OOM
             trans_img, homo_img = torch.autograd.functional.jacobian(
                 lambda t,h: self.render_pose2image(t,h, opt=opt), 
                 (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
                 create_graph=False,
                 strict = False,
-                vectorize=False,
+                vectorize=vectorize,
                 strategy="reverse-mode")  # forward mode is not supported for grid_sample
         # trans_img now have shape (2, H*W*3)
         assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
