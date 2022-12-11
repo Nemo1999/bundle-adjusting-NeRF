@@ -31,8 +31,8 @@ loss_weight:                                                # loss weights (in l
     total_variance: -2
 
 optim:                                                      # optimization options
-    lr: 1.e-4                                               # learning rate (main)
-    lr_warp: 1.e-3                                          # learning rate of warp parameters
+    lr: 1.e-5                                               # learning rate (main)
+    lr_warp: 1.e-4                                          # learning rate of warp parameters
 
 batch_size: 5                                               # batch size (set to number of patches to consider)
 max_iter: 15000                                              # train to maximum number of iterations

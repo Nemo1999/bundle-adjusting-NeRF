@@ -17,7 +17,7 @@ def main():
     options.save_options_file(opt)
 
     wandb.init(
-        project="Planar Experiments",
+        project=f"{opt.group}",
         notes=f"planar run: model={opt.model}, name={opt.name}, yaml={opt.yaml}",
         tags=["planar", opt.name],
         config=opt,

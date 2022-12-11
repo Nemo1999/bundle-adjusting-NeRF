@@ -13,6 +13,7 @@ from icecream import ic
 import camera 
 from warp import lie
 import wandb
+from matplotlib import pyplot as plt
 
 # training cycle is same as planar
 
@@ -22,11 +23,42 @@ class Model(planar.Model):
         super().__init__(opt)
     def log_scalars(self, opt, var, loss, metric=None, step=0, split="train"):
         super().log_scalars(opt, var, loss, metric, step, split)
-        if opt.arch.kernel_type in ["gaussian_diff", "combined_diff"]:
-            sigma = self.graph.neural_image.gaussian_diff_kernel_sigma
-            self.tb.add_scalar(f"{split}/{'gaussian_kernel_std'}", sigma.data , step)
-            wandb.log({f"{split}.{'gaussian_kernel_std'}": sigma.data}, step=step)
+        if opt.arch.kernel_type != "none":
+            if opt.arch.kernel_type in ["gaussian_diff", "combined_diff"]:
+                # log differentialble kernel sigma 
+                sigma = self.graph.neural_image.gaussian_diff_kernel_sigma
+                self.tb.add_scalar(f"{split}/{'kernel_param'}", sigma.data , step)
+                wandb.log({f"{split}.{'kernel_param'}": sigma.data}, step=step)
+            else:
+                # log scheduled kerenl sigma
+                sigma = self.graph.neural_image.get_scheduled_sigma()
+                self.tb.add_scalar(f"{split}/{'kernel_param'}", sigma , step)
+                wandb.log({f"{split}.{'kernel_param'}": sigma}, step=step)
+        # log rank
+        rank = self.graph.neural_image.get_scheduled_rank()
+        self.tb.add_scalar(f"{split}/{'rank'}", rank , step)
+        wandb.log({f"{split}.{'rank'}": rank}, step=step)
 
+    def visualize(self,opt,var,step=0,split="train"):
+        super().visualize(opt,var,step,split)
+        neural_image = self.graph.neural_image
+        max_kernel_size = neural_image.kernel_size
+        kernel_sample = neural_image.get_kernel()
+        padd_len = (max_kernel_size - kernel_sample.shape[0]) // 2
+        kernel_sample = torch.nn.functional.pad(kernel_sample, (padd_len, padd_len))
+        kernel_sample = kernel_sample.detach().cpu().numpy()
+        # log kernel
+        fig = plt.figure()
+        plt.plot(kernel_sample)
+        wandb.log({f"{split}.{'kernel'}": wandb.Image(fig)}, step=step)
+        plt.close(fig)
+        # log fft transform of kernel
+        fig = plt.figure()
+        plt.plot(np.abs(np.fft.fft(kernel_sample)))
+        wandb.log({f"{split}.{'kernel_fft'}": fig}, step=step)
+        plt.close(fig)
+
+           
 # ============================ computation graph for forward/backprop ============================
 
 
@@ -64,21 +96,23 @@ class NeuralImageFunction(torch.nn.Module):
 
     def __init__(self, opt):
         super().__init__()
+        self.initialize_param(opt)
+        self.define_network(opt)
+        self.register_diff_kernel()
+        # use Parameter so it could be checkpointed
+        self.progress = torch.nn.Parameter(torch.tensor(0.))
 
+    def initialize_param(self,opt):
         # arch options
         self.kernel_type = opt.arch.kernel_type
         self.kernel_size = opt.arch.kernel_size
         self.resolution = opt.arch.resolution # W, H
-        self.max_ranks = opt.arch.max_ranks
 
-        self.device = torch.device("cpu" if opt.cpu else f"cuda:{opt.gpu}")
+        self.device = opt.device
         # c2f_schedule options
         self.c2f_kernel = opt.c2f_schedule.kernel_t
         self.c2f_rank = opt.c2f_schedule.rank
 
-        self.define_network()
-        # use Parameter so it could be checkpointed
-        self.progress = torch.nn.Parameter(torch.tensor(0.))
     @torch.no_grad()
     def get_gaussian_kernel(self, t, kernel_size: int):
         # when t=0, the returned kernel is a impulse function
@@ -119,10 +153,11 @@ class NeuralImageFunction(torch.nn.Module):
         kernel = torch.zeros(self.kernel_size)
         kernel[self.kernel_size-t:self.kernel_size+t+1] = 1 / (t*2 + 1)
         return kernel
-
+    def get_scheduled_sigma(self):
+        return interp_schedule(self.progress, self.c2f_kernel)
     def get_kernel(self) -> torch.tensor:
         # the blurness of kernel depends on scheduled t parameter
-        t = interp_schedule(self.progress, self.c2f_kernel)
+        t = self.get_scheduled_sigma()
         # smaller kernel size for small t, for faster computation 
         kernel_size = min(int(t * 4) , self.kernel_size)
         if kernel_size % 2 == 0 :
@@ -140,25 +175,30 @@ class NeuralImageFunction(torch.nn.Module):
             raise ValueError(f"invalid kernel type at \"{self.kernel_type}\"")
         return kernel.to(self.device)
 
-    def define_network(self):
+    def define_network(self, opt):
+        self.max_ranks = opt.arch.max_ranks
         rank1 = torch.zeros(3, self.max_ranks, self.resolution[0])
         rank1 = torch.abs(torch.normal(rank1, 0.1))
         rank2 = torch.zeros(3, self.max_ranks, self.resolution[1])
         rank2 = torch.abs(torch.normal(rank2, 0.1))
         self.register_parameter(name='rank1', param=torch.nn.Parameter(rank1))
         self.register_parameter(name='rank2', param=torch.nn.Parameter(rank2))
+    
+    def register_diff_kernel(self):
         # register kernel if it is differentialble
         if self.kernel_type in ["gaussian_diff", "combined_diff"] :
             t = interp_schedule(0, self.c2f_kernel)
             # register sigma as differentiable parameter
             _ , sigma, = self.get_gaussian_diff_kernel(t, self.kernel_size)
             self.register_parameter(name='gaussian_diff_kernel_sigma', param=torch.nn.Parameter(sigma.to(self.device)))
+    
+    def get_scheduled_rank(self):
+        return int(interp_schedule(self.progress, self.c2f_rank))
 
     def forward(self, opt, coord_2D):  # [B,...,3]
-        cur_rank = int(interp_schedule(self.progress, self.c2f_rank))
-        
+        cur_rank = self.get_scheduled_rank()
+
         kernel = self.get_kernel().expand(cur_rank, 1, -1)
-        
 
         r1_blur = torch_F.conv1d(self.rank1[:, :cur_rank, :], kernel,
                                  bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
@@ -170,13 +210,7 @@ class NeuralImageFunction(torch.nn.Module):
         assert rbg.shape == (
             3, self.resolution[1], self.resolution[0]), f"rbg image has shape {rbg.shape}"
         B = coord_2D.shape[0]
-        #ic(coord_2D)
-        # coord_2D += 0.5
-        # coord_2D[:,:,0] *= self.resolution[0]
-        # coord_2D[:,:,1] *= self.resolution[1]
 
         sampled_rbg = torch_F.grid_sample(rbg.expand(B, -1, -1, -1), coord_2D.unsqueeze(1), align_corners=False).squeeze(2)
-        #ic(sampled_rbg)
-        #ic(coord_2D[0][0])
-        #ic(sampled_rbg.shape)
+        
         return sampled_rbg.permute(0, 2, 1)
