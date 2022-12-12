@@ -86,8 +86,8 @@ class NeuralImageFunction(planar_svd.NeuralImageFunction):
         cur_rank1 = min(cur_rank, self.max_ranks[0]) 
         cur_rank2 = min(cur_rank, self.max_ranks[1])
         
-        rank1_ifft = torch.fft.ifft(self.rank1[:, :cur_rank1,:], dim=2) # 3, cur_rank1, self.resolution[1]
-        rank2_ifft = torch.fft.ifft(self.rank2[:, :cur_rank2,:], dim=2) # 3, cur_rank2, self.resolution[0] 
+        rank1_ifft = torch.fft.ifft(self.rank1[:, :cur_rank1,:], dim=2, norm="forward") # 3, cur_rank1, self.resolution[1]
+        rank2_ifft = torch.fft.ifft(self.rank2[:, :cur_rank2,:], dim=2, norm="forward") # 3, cur_rank2, self.resolution[0] 
 
         if self.kernel_type != "none":
             kernel = self.get_kernel()
