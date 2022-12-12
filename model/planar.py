@@ -167,6 +167,8 @@ class Model(base.Model):
         frame2 = self.predict_entire_image(opt)
         # log scale power spectron of current image
         frame_fft = torch.log10(torch.abs(torch.fft.fftshift(torch.fft.fft2(frame2,norm="forward")))**2)
+        # normalize the pixel value to [0,1]
+        frame_fft = (frame_fft-frame_fft.min())/(frame_fft.max()-frame_fft.min())
         frame_cat = (torch.cat([frame,frame2],dim=1)*255).byte().permute(1,2,0).numpy()
         imageio.imsave("{}/{}.png".format(self.vis_path,self.vis_it),frame_cat)
         self.vis_it += 1

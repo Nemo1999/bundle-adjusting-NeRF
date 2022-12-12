@@ -46,7 +46,9 @@ class Model(planar.Model):
         kernel_sample = neural_image.get_kernel()
         padd_len = (max_kernel_size - kernel_sample.shape[0]) // 2
         kernel_sample = torch.nn.functional.pad(kernel_sample, (padd_len, padd_len))
+        kernel_spectrum = torch.abs(torch.fft.fftshift(torch.fft.fft(kernel_sample)))
         kernel_sample = kernel_sample.detach().cpu().numpy()
+        kernel_spectrum = kernel_spectrum.detach().cpu().numpy()
         # log kernel
         fig = plt.figure()
         plt.plot(kernel_sample)
@@ -54,8 +56,8 @@ class Model(planar.Model):
         plt.close(fig)
         # log fft transform of kernel
         fig = plt.figure()
-        plt.plot(np.abs(np.fft.fft(kernel_sample)))
-        wandb.log({f"{split}.{'kernel_fft'}": fig}, step=step)
+        plt.plot(kernel_spectrum)
+        wandb.log({f"{split}.{'kernel_fft'}": wandb.Image(fig)}, step=step)
         plt.close(fig)
 
            
