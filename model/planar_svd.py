@@ -103,6 +103,7 @@ class NeuralImageFunction(torch.nn.Module):
         self.register_diff_kernel()
         # use Parameter so it could be checkpointed
         self.progress = torch.nn.Parameter(torch.tensor(0.))
+        self.opt = opt
 
     def initialize_param(self,opt):
         # arch options
@@ -213,6 +214,6 @@ class NeuralImageFunction(torch.nn.Module):
             3, self.resolution[1], self.resolution[0]), f"rbg image has shape {rbg.shape}"
         B = coord_2D.shape[0]
 
-        sampled_rbg = torch_F.grid_sample(rbg.expand(B, -1, -1, -1), coord_2D.unsqueeze(1), align_corners=False).squeeze(2)
+        sampled_rbg = torch_F.grid_sample(rbg.expand(B, -1, -1, -1), coord_2D.unsqueeze(1), align_corners=False, mode=opt.arch.grid_interp).squeeze(2)
         
         return sampled_rbg.permute(0, 2, 1)
