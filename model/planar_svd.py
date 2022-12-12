@@ -141,12 +141,20 @@ class NeuralImageFunction(torch.nn.Module):
         kernel = 1/max(sigma*math.sqrt(2*math.pi), 1) * torch.exp(exponent) 
         return kernel.to(torch.float), sigma.to(torch.float)
 
-    def get_combined_diff_kernel(self, t, kernel_size: int): 
+    def get_combined_diff_kernel(self, t, kernel_size: int, mode="weighted"):
+
+        combine_levels = self.opt.arch.combine_levels 
+        
         kernels = torch.stack(tuple(
             self.get_gaussian_diff_kernel(t, kernel_size, sigma_scale=2**i)[0] 
-            for i in range(5)))
-        kernels = torch.mean(kernels, dim=0)
-        return kernels
+            for i in range(combine_levels)))
+        if mode == "weighted":
+            weight = torch.arange(1, combine_levels+1).to(self.device).unsqueeze(1)
+            weight = weight / torch.sum(weight)
+            kernel = torch.sum(kernels * weight, dim=0)
+        else:
+            kernel = torch.mean(kernels, dim=0)
+        return kernel
 
     @torch.no_grad()        
     def get_average_kernel(self, t, kernel_size: int):
@@ -162,7 +170,12 @@ class NeuralImageFunction(torch.nn.Module):
         # the blurness of kernel depends on scheduled t parameter
         t = self.get_scheduled_sigma()
         # smaller kernel size for small t, for faster computation 
-        kernel_size = min(int(t * 4) , self.kernel_size)
+        if self.kernel_type != "combined_diff": 
+            # in combined_diff, kernel size should be fixed, t doesn't affect kernel size
+            kernel_size = min(int(t * 4) , self.kernel_size)
+        else:
+            kernel_size = self.kernel_size
+
         if kernel_size % 2 == 0 :
             kernel_size += 1
 
