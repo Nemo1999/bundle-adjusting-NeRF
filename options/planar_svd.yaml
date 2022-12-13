@@ -6,7 +6,8 @@ arch:                                                       # architectural opti
     max_ranks: 100
     kernel_type: gaussian_diff                             # kernel can be gaussian  , diff_gaussian , combined_diff or  average
     kernel_size: 21                                        # kerne width should be an odd integer
-
+    combine_levels: 5                                       # level of gaussians for combined_diff kernel ( only effective for kernel_type = "combined_diff" )
+    grid_interp: "bilinear"                                 # "nearest", "bilinear", "bicubic"
 c2f_schedule:                                                   # coarse-to-fine scheduling on positional encoding
     rank: [100]
     kernel_t: [12,0,0]                                      # kernel sigma or t scheduling, provide singleton list to used as initial value for arch.kernel_type= gaussian_diff or combined_diff

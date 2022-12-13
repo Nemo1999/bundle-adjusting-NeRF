@@ -86,6 +86,7 @@ class Model(base.Model):
                 self.graph.warp_param.weight.data[0] = 0
         # after training
         os.system("ffmpeg -y -framerate 30 -i {}/%d.png -pix_fmt yuv420p {}".format(self.vis_path,self.video_fname))
+        wandb.log({"video": wandb.Video(self.video_fname)})
         self.save_checkpoint(opt,ep=None,it=self.it)
         if opt.tb:
             self.tb.flush()
@@ -164,6 +165,10 @@ class Model(base.Model):
         frame_GT = self.visualize_patches(opt,self.warp_pert)
         frame = self.visualize_patches(opt,self.graph.warp_param.weight)
         frame2 = self.predict_entire_image(opt)
+        # log scale power spectron of current image
+        frame_fft = torch.log10(torch.abs(torch.fft.fftshift(torch.fft.fft2(frame2,norm="forward")))**2)
+        # normalize the pixel value to [0,1]
+        frame_fft = (frame_fft-frame_fft.min())/(frame_fft.max()-frame_fft.min())
         frame_cat = (torch.cat([frame,frame2],dim=1)*255).byte().permute(1,2,0).numpy()
         imageio.imsave("{}/{}.png".format(self.vis_path,self.vis_it),frame_cat)
         self.vis_it += 1
@@ -175,6 +180,7 @@ class Model(base.Model):
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_boxes",frame[None])
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
+            util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_spectrum",frame_fft[None])
         
         if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
             # visualize jacobian with respect to homography and translation
@@ -235,14 +241,15 @@ class Graph(base.Graph):
     def pose2image_jacobian(self, opt):
         # function from warp_pert parameters to image
         with torch.no_grad():
-            vectorize = True if opt.model == "planar" else False # only use vectorize on planar model to avoid OOM
+            vectorize = True if opt.model == "planar" else False
+            strategy = "forward-mode" if opt.model == "planar" else "reverse-mode" # only forward-mode on planar model
             trans_img, homo_img = torch.autograd.functional.jacobian(
                 lambda t,h: self.render_pose2image(t,h, opt=opt), 
                 (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
                 create_graph=False,
                 strict = False,
-                vectorize=vectorize,
-                strategy="reverse-mode")  # forward mode is not supported for grid_sample
+                vectorize= vectorize,
+                strategy=strategy)  # forward mode is not supported for grid_sample
         # trans_img now have shape (2, H*W*3)
         assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
         trans_img = trans_img.permute(3, 0, 1, 2)
