@@ -55,8 +55,10 @@ class Model(base.Model):
     def setup_visualizer(self,opt):
         super().setup_visualizer(opt)
         # set colors for visualization
-        box_colors = ["#ff0000","#40afff","#9314ff","#ffd700","#00ff00"]
-        box_colors = list(map(util.colorcode_to_number,box_colors))
+        # box colors goes from red to blue gradually
+        box_colors = list((255 * (1 - i/5) , 0, 255 * i/5) for i in range(5))
+        #box_colors = ["#ff0000","#40afff","#9314ff","#ffd700","#00ff00"]
+        #box_colors = list(map(util.colorcode_to_number,box_colors))
         self.box_colors = np.array(box_colors).astype(int)
         assert(len(self.box_colors)==opt.batch_size)
         # create visualization directory
