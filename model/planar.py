@@ -155,11 +155,27 @@ class Model(base.Model):
         # compute PSNR
         psnr = -10*loss.render.log10()
         self.tb.add_scalar("{0}/{1}".format(split,"PSNR"),psnr,step)
-        wandb.log({f"{split}.{'PSNR'}": psnr}, step=step)
+        wandb.log({f"P_all_PSNR": psnr}, step=step)
         # warp error
         warp_error = (self.graph.warp_param.weight-self.warp_pert).norm(dim=-1).mean()
         self.tb.add_scalar("{0}/{1}".format(split,"warp error"),warp_error,step)
-        wandb.log({f"{split}.{'warp_error'}": warp_error}, step=step)
+        wandb.log({"P_all_warp_err": warp_error}, step=step)
+        
+        # per patch psnr and warp_error is for visualization only
+        image_pert = var.image_pert.view(opt.batch_size,3,opt.H_crop*opt.W_crop).permute(0,2,1)
+        warp_error = (self.graph.warp_param.weight - self.warp_pert).norm(dim=-1)
+        # log per-patch PSNR and Warp Error
+        for i in range(opt.batch_size):
+            PSNR_name = f"P_{i}_PSNR"
+            WARP_name = f"P_{i}_warp_err"
+            warp_error_patch = warp_error[i]
+            mse_patch = self.graph.MSE_loss(var.rgb_warped[i],image_pert[i])
+            psnr_patch  = -10 * mse_patch.log10()
+            self.tb.add_scalar("{0}/{1}".format(split,PSNR_name),psnr_patch,step)
+            self.tb.add_scalar("{0}/{1}".format(split,WARP_name),warp_error_patch,step)
+            wandb.log({PSNR_name: psnr_patch}, step=step)
+            wandb.log({WARP_name: warp_error_patch}, step=step)
+        
 
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):
@@ -220,8 +236,10 @@ class Graph(base.Graph):
         loss = edict()
         if opt.loss_weight.render is not None:
             image_pert = var.image_pert.view(opt.batch_size,3,opt.H_crop*opt.W_crop).permute(0,2,1)
+            
             loss.render = self.MSE_loss(var.rgb_warped,image_pert)
         return loss
+
 
     def render_pose2image(self, xy_translation, homography_param, opt=None):
         # render with additional xy_translation or homography parameter
