@@ -172,11 +172,14 @@ class NeuralImageFunction(torch.nn.Module):
         assert kernel_size % 2 == 1 and kernel_size > 0, f"invalid kernel_size={kernel_size}"
         ns = np.arange(-(kernel_size//2), kernel_size//2+1)
         kernel = math.exp(-t) * scipy.special.iv(ns, t)
-        return torch.tensor(kernel).float()
+        return torch.tensor(kernel).float()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 
-    def get_gaussian_diff_kernel(self, t, kernel_size: int, sigma_scale=None):
-
-        if hasattr(self,"gaussian_diff_kernel_sigma"):
+    def get_gaussian_diff_kernel(self, t, kernel_size: int, sigma_scale=None, external_sigma=None):
+        
+        if external_sigma is not None:
+            sigma = external_sigma
+        elif hasattr(self,"gaussian_diff_kernel_sigma"):
+            # use internal sigma for neural image if external_sigma is None
             # reuse diff model parameter sigm
             if sigma_scale != None: # scaling parameter for combined kernel
                 sigma = sigma_scale * self.gaussian_diff_kernel_sigma
@@ -185,6 +188,7 @@ class NeuralImageFunction(torch.nn.Module):
         else:
             # create and return the parater used as sigma.
             sigma = torch.tensor(t).to(self.device)
+        
         ns =torch.arange(-(kernel_size//2), kernel_size//2+1).to(self.device)
         exponent = - 0.5 * (ns / max(sigma,0.01)) * (ns / max(sigma,0.01))
         kernel = 1/max(sigma*math.sqrt(2*math.pi), 1) * torch.exp(exponent) 
@@ -215,7 +219,7 @@ class NeuralImageFunction(torch.nn.Module):
         return kernel
     def get_scheduled_sigma(self):
         return interp_schedule(self.progress, self.c2f_kernel)
-    def get_kernel(self) -> torch.tensor:
+    def get_kernel(self, external_sigma=None) -> torch.tensor:
         # the blurness of kernel depends on scheduled t parameter
         t = self.get_scheduled_sigma()
         # smaller kernel size for small t, for faster computation 
@@ -228,7 +232,9 @@ class NeuralImageFunction(torch.nn.Module):
         if kernel_size % 2 == 0 :
             kernel_size += 1
 
-        if self.kernel_type == "gaussian":
+        if external_sigma is not None:
+            kernel , _ = self.get_gaussian_diff_kernel(t, kernel_size, external_sigma=external_sigma)
+        elif self.kernel_type == "gaussian":
             kernel = self.get_gaussian_kernel(t, kernel_size)
         elif self.kernel_type == "average":
             kernel =  self.get_average_kernel(t, kernel_size)
@@ -256,14 +262,17 @@ class NeuralImageFunction(torch.nn.Module):
             # register sigma as differentiable parameter
             _ , sigma, = self.get_gaussian_diff_kernel(t, self.kernel_size)
             self.register_parameter(name='gaussian_diff_kernel_sigma', param=torch.nn.Parameter(sigma.to(self.device)))
-    
+
     def get_scheduled_rank(self):
         return int(interp_schedule(self.progress, self.c2f_rank))
 
-    def forward(self, opt, coord_2D):  # [B,...,3]
+    def forward(self, opt, coord_2D, external_kernel=None, external_sigma=None):  # [B,...,3]
         cur_rank = self.get_scheduled_rank()
 
-        kernel = self.get_kernel().expand(cur_rank, 1, -1)
+        if external_kernel is not None:
+            kernel = external_kernel
+        else:
+            kernel = self.get_kernel(external_sigma).expand(cur_rank, 1, -1)
 
         r1_blur = torch_F.conv1d(self.rank1[:, :cur_rank, :], kernel,
                                  bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
