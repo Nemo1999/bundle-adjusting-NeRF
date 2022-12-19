@@ -60,6 +60,55 @@ class Model(planar.Model):
         wandb.log({f"{split}.{'kernel_fft'}": wandb.Image(fig)}, step=step)
         plt.close(fig)
 
+        # log the gradient of sigma w.r.t the reconstruction Loss
+        if opt.arch.kernel_type in ["gaussian_diff", "combined_diff", "gaussian"]:
+            sigma_scales = [2.0**i for i in range(-3, 8)]
+            weights = torch.arange(1,11+1).float().to(opt.device)
+            weights = weights / weights.sum()
+            for sigma_scale, weight, exponent in zip(sigma_scales, weights, range(-3, 8)):
+                sigma = torch.tensor(1.0).to(torch.float).to(opt.device).requires_grad_()
+                xy_grid = warp.get_normalized_pixel_grid_crop(opt)
+                xy_grid_warped = warp.warp_grid(opt,xy_grid,self.graph.warp_param.weight)
+                # render images
+                rgb_warped = neural_image.forward(opt,xy_grid_warped, external_sigma=sigma*sigma_scale) # [B,HW,3]
+                image_pert = var.image_pert.view(opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
+                l2_loss = ((rgb_warped - image_pert)**2).mean(axis=2, keepdim=False).mean(axis=1, keepdim=False)
+                
+                # log all-patch grad w.r.t sigma
+                total_grad_sigma = torch.autograd.grad(l2_loss.mean(), sigma, retain_graph=True)[0]
+                #total_grad_sigma *= weight
+                self.tb.add_scalar(f"P_all_sigma'_2^{exponent}", total_grad_sigma, step)
+                wandb.log({f"P_all_grad_sigma'_2^{exponent}": total_grad_sigma}, step=step)
+
+                # log all-patch grad w.r.t warp parameters
+                total_grad_warp = torch.autograd.grad(l2_loss.mean(), self.graph.warp_param.weight, retain_graph=True)[0]
+                #total_grad_warp *= weight
+                total_grad_warp_norm = torch.norm(total_grad_warp, dim=1)
+                total_warp_delta = (self.graph.warp_param.weight - self.warp_pert)  # current warp - GT warp
+                total_grad_warp_cosine = torch.nn.functional.cosine_similarity(total_grad_warp, total_warp_delta , dim=1)
+                
+                self.tb.add_scalar(f"P_all_warp'_norm_2^{exponent}", total_grad_warp_norm.mean(), step)
+                wandb.log({f"P_all_warp'_norm_2^{exponent}": total_grad_warp_norm.mean()}, step=step)
+
+                self.tb.add_scalar(f"P_all_warp'_cosine_2^{exponent}", total_grad_warp_cosine.mean(), step)
+                wandb.log({f"P_all_warp'_cosine_2^{exponent}": total_grad_warp_cosine.mean()}, step=step)
+
+                # log per-patch loss
+                for b in range(opt.batch_size):
+                    # log per-patch grad w.r.t sigma
+                    retain_graph = b != opt.batch_size - 1
+                    patch_grad = torch.autograd.grad(l2_loss[b], sigma, retain_graph=retain_graph)[0]
+                    #patch_grad *= weight
+                    self.tb.add_scalar(f"P_{b}_sigma'_2^{exponent}", patch_grad, step)
+                    wandb.log({f"P_{b}_sigma'_2^{exponent}": patch_grad}, step=step)
+
+                    # log per-patch grad w.r.t warp parameters
+                    self.tb.add_scalar(f"P_{b}_warp'_norm_2^{exponent}", total_grad_warp_norm[b], step)
+                    wandb.log({f"P_{b}_warp'_norm_2^{exponent}": total_grad_warp_norm[b]}, step=step)
+                    self.tb.add_scalar(f"P_{b}_warp'_cosine_2^{exponent}", total_grad_warp_cosine[b], step)
+                    wandb.log({f"P_{b}_warp'_cosine_2^{exponent}": total_grad_warp_cosine[b]}, step=step)
+
+
            
 # ============================ computation graph for forward/backprop ============================
 
