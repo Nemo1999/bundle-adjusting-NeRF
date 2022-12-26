@@ -204,6 +204,7 @@ class Model(nerf.Model):
             for ep in ep_list: file.write("file {}.png\n".format(ep))
         cam_vid_fname = "{}/poses.mp4".format(opt.output_path)
         os.system("ffmpeg -y -r 30 -f concat -i {0} -pix_fmt yuv420p {1} >/dev/null 2>&1".format(list_fname,cam_vid_fname))
+        wandb.log({"campose_vid": wandb.Video(self.cam_vid_fname)})
         os.remove(list_fname)
 
 # ============================ computation graph for forward/backprop ============================
