@@ -21,10 +21,16 @@ from matplotlib import pyplot as plt
 class Model(planar.Model):
     def __init__(self, opt):
         super().__init__(opt)
+
     def log_scalars(self, opt, var, loss, metric=None, step=0, split="train"):
         super().log_scalars(opt, var, loss, metric, step, split)
+        if opt.arch.kernel_type == "seperate":
+            content_kernel_type = opt.arch.content.kernel_type
+        else:
+            content_kernel_type = opt.arch.kernel_type
+
         if opt.arch.kernel_type != "none":
-            if opt.arch.kernel_type in ["gaussian_diff", "combined_diff"]:
+            if content_kernel_type in ["gaussian_diff", "combined_diff"]:
                 # log differentialble kernel sigma 
                 sigma = self.graph.neural_image.gaussian_diff_kernel_sigma
                 self.tb.add_scalar(f"{split}/{'kernel_param'}", sigma.data , step)
@@ -39,29 +45,8 @@ class Model(planar.Model):
         self.tb.add_scalar(f"{split}/{'rank'}", rank , step)
         wandb.log({f"{split}.{'rank'}": rank}, step=step)
 
-    def visualize(self,opt,var,step=0,split="train"):
-        super().visualize(opt,var,step,split)
-        neural_image = self.graph.neural_image
-        max_kernel_size = neural_image.kernel_size
-        kernel_sample = neural_image.get_kernel()
-        padd_len = (max_kernel_size - kernel_sample.shape[0]) // 2
-        kernel_sample = torch.nn.functional.pad(kernel_sample, (padd_len, padd_len))
-        kernel_spectrum = torch.abs(torch.fft.fftshift(torch.fft.fft(kernel_sample)))
-        kernel_sample = kernel_sample.detach().cpu().numpy()
-        kernel_spectrum = kernel_spectrum.detach().cpu().numpy()
-        # log kernel
-        fig = plt.figure()
-        plt.plot(kernel_sample)
-        wandb.log({f"{split}.{'kernel'}": wandb.Image(fig)}, step=step)
-        plt.close(fig)
-        # log fft transform of kernel
-        fig = plt.figure()
-        plt.plot(kernel_spectrum)
-        wandb.log({f"{split}.{'kernel_fft'}": wandb.Image(fig)}, step=step)
-        plt.close(fig)
-
         # log the gradient of sigma w.r.t the reconstruction Loss
-        if opt.arch.kernel_type in ["gaussian_diff", "combined_diff", "gaussian"]:
+        if content_kernel_type in ["gaussian_diff", "combined_diff", "gaussian"]:
             sigma_scales = [2.0**i for i in range(-3, 8)]
             weights = torch.arange(1,11+1).float().to(opt.device)
             weights = weights / weights.sum()
@@ -70,7 +55,8 @@ class Model(planar.Model):
                 xy_grid = warp.get_normalized_pixel_grid_crop(opt)
                 xy_grid_warped = warp.warp_grid(opt,xy_grid,self.graph.warp_param.weight)
                 # render images
-                rgb_warped = neural_image.forward(opt,xy_grid_warped, external_sigma=sigma*sigma_scale) # [B,HW,3]
+                kernel = neural_image.get_kernel(kernel_type="gaussian_diff", kernel_size=sigma_scale*6, external_diff_sigma=sigma*sigma_scale)
+                rgb_warped = neural_image.forward(opt,xy_grid_warped) # [B,HW,3]
                 image_pert = var.image_pert.view(opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
                 l2_loss = ((rgb_warped - image_pert)**2).mean(axis=2, keepdim=False).mean(axis=1, keepdim=False)
                 
@@ -81,7 +67,7 @@ class Model(planar.Model):
                 wandb.log({f"P_all_grad_sigma'_2^{exponent}": total_grad_sigma}, step=step)
 
                 # log all-patch grad w.r.t warp parameters
-                total_grad_warp = torch.autograd.grad(l2_loss.mean(), self.graph.warp_param.weight, retain_graph=True)[0]
+                total_grad_warp = torch.autograd.grad(l2_loss.mean(), self.graph.warp_param.weight, retain_graph=opt.log_per_patch_grad)[0]
                 #total_grad_warp *= weight
                 total_grad_warp_norm = torch.norm(total_grad_warp, dim=1)
                 total_warp_delta = (self.graph.warp_param.weight - self.warp_pert)  # current warp - GT warp
@@ -93,20 +79,68 @@ class Model(planar.Model):
                 self.tb.add_scalar(f"P_all_warp'_cosine_2^{exponent}", total_grad_warp_cosine.mean(), step)
                 wandb.log({f"P_all_warp'_cosine_2^{exponent}": total_grad_warp_cosine.mean()}, step=step)
 
-                # log per-patch loss
-                for b in range(opt.batch_size):
-                    # log per-patch grad w.r.t sigma
-                    retain_graph = b != opt.batch_size - 1
-                    patch_grad = torch.autograd.grad(l2_loss[b], sigma, retain_graph=retain_graph)[0]
-                    #patch_grad *= weight
-                    self.tb.add_scalar(f"P_{b}_sigma'_2^{exponent}", patch_grad, step)
-                    wandb.log({f"P_{b}_sigma'_2^{exponent}": patch_grad}, step=step)
+                if opt.log_per_patch_loss:
+                    # log per-patch loss
+                    for b in range(opt.batch_size):
+                        # log per-patch grad w.r.t sigma
+                        retain_graph = b != opt.batch_size - 1
+                        patch_grad = torch.autograd.grad(l2_loss[b], sigma, retain_graph=retain_graph)[0]
+                        #patch_grad *= weight
+                        self.tb.add_scalar(f"P_{b}_sigma'_2^{exponent}", patch_grad, step)
+                        wandb.log({f"P_{b}_sigma'_2^{exponent}": patch_grad}, step=step)
 
-                    # log per-patch grad w.r.t warp parameters
-                    self.tb.add_scalar(f"P_{b}_warp'_norm_2^{exponent}", total_grad_warp_norm[b], step)
-                    wandb.log({f"P_{b}_warp'_norm_2^{exponent}": total_grad_warp_norm[b]}, step=step)
-                    self.tb.add_scalar(f"P_{b}_warp'_cosine_2^{exponent}", total_grad_warp_cosine[b], step)
-                    wandb.log({f"P_{b}_warp'_cosine_2^{exponent}": total_grad_warp_cosine[b]}, step=step)
+                        # log per-patch grad w.r.t warp parameters
+                        self.tb.add_scalar(f"P_{b}_warp'_norm_2^{exponent}", total_grad_warp_norm[b], step)
+                        wandb.log({f"P_{b}_warp'_norm_2^{exponent}": total_grad_warp_norm[b]}, step=step)
+                        self.tb.add_scalar(f"P_{b}_warp'_cosine_2^{exponent}", total_grad_warp_cosine[b], step)
+                        wandb.log({f"P_{b}_warp'_cosine_2^{exponent}": total_grad_warp_cosine[b]}, step=step)
+
+    def visualize(self,opt,var,step=0,split="train"):
+        super().visualize(opt,var,step,split)
+        def process_kernel(kernel_sample):
+            # padd kernel 
+            max_kernel_size = self.graph.neural_image.kernel_size
+            padd_len = (max_kernel_size - kernel_sample.shape[0]) // 2
+            kernel_sample = torch.nn.functional.pad(kernel_sample, (padd_len, padd_len))
+            # compute fft
+            kernel_spectrum = torch.abs(torch.fft.fftshift(torch.fft.fft(kernel_sample)))
+            # convert to numpy
+            kernel_sample = kernel_sample.detach().cpu().numpy()
+            kernel_spectrum = kernel_spectrum.detach().cpu().numpy()
+            return kernel_sample, kernel_spectrum
+
+        if opt.arch.kernel_type == "seperate":
+            warp_kernel_sample, warp_kernel_spectrum = process_kernel(var.kernel_warp)
+            content_kernel_sample, content_kernel_spectrum = process_kernel(var.kernel_content)
+            # log kernel
+            fig = plt.figure()
+            plt.title(f"seperate kernel: warp:{opt.arch.warp.kernel_type}, content:{opt.arch.content.kernel_type}")
+            plt.plot(warp_kernel_sample)
+            plt.plot(content_kernel_sample)
+            wandb.log({f"{split}.{'kernel'}": wandb.Image(fig)}, step=step)
+            plt.close(fig)
+            # log fft transform of kernel
+            fig = plt.figure()
+            plt.title(f"seperate kernel: warp:{opt.arch.warp.kernel_type}, content:{opt.arch.content.kernel_type}")
+            plt.plot(warp_kernel_spectrum)
+            plt.plot(content_kernel_spectrum)
+            wandb.log({f"{split}.{'kernel_fft'}": wandb.Image(fig)}, step=step)
+            plt.close(fig)
+        else:
+            kernel_sample, kernel_spectrum = process_kernel(var.kernel)
+            # log kernel
+            fig = plt.figure()
+            plt.title(f"{opt.arch.kernel_type}")
+            plt.plot(kernel_sample)
+            wandb.log({f"{split}.{'kernel'}": wandb.Image(fig)}, step=step)
+            plt.close(fig)
+            # log fft transform of kernel
+            fig = plt.figure()
+            plt.title(f"{opt.arch.kernel_type}")
+            plt.plot(kernel_spectrum)
+            wandb.log({f"{split}.{'kernel_fft'}": wandb.Image(fig)}, step=step)
+            plt.close(fig)
+        
 
 
            
@@ -122,11 +156,86 @@ class Graph(planar.Graph):
         if opt.loss_weight.render is not None:
             image_pert = var.image_pert.view(
                 opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
-            loss.render = self.MSE_loss(var.rgb_warped, image_pert)
+            if opt.arch.kernel_type == "seperate":
+                loss.render = self.MSE_loss(var.rgb_warped, image_pert) # MSE loss when learning neural image content  
+                loss.render_warp = self.MSE_loss(var.rgb_warped_additional, image_pert) # MSE loss when learning warping parameters
+            else:
+                loss.render = self.MSE_loss(var.rgb_warped, image_pert)
         if opt.loss_weight.total_variance is not None:
             loss.total_variance = self.TV_loss(self.neural_image)
         return loss
     
+    def forward(self,opt,var,mode=None):
+        if opt.arch.kernel_type == "seperate":
+            assert opt.arch.kernel_type == "seperate"
+            # the blurness of kernel depends on scheduled t parameter
+
+            # learn content 
+            self.warp_param.requires_grad = False # freeze warping parameters
+            for param in self.neural_image.parameters(): # learn neural_image content, including rank1, rank2, diff_sigma
+                param.requires_grad = True 
+            content_setting = opt.arch.content
+            content_kernel_size = content_setting.kernel_size
+            content_kernel_type = content_setting.kernel_type
+            if content_kernel_type in ["combined_diff" , "gaussian_diff"]:
+                sigma_diff = self.neural_image.gaussian_diff_kernel_sigma
+                sigma_diff.requires_grad = True  # we backprop sigma in content loss 
+                sigma_diff = sigma_diff * content_setting.sigma_scale
+                #ic(self.neural_image.gaussian_diff_kernel_sigma)
+                kernel_content = self.neural_image.get_kernel(content_kernel_type, content_kernel_size, external_diff_sigma=sigma_diff)
+            else:
+                sigma = interp_schedule(self.neural_image.progress, content_setting.c2f_kernel)
+                sigma = sigma* content_setting.sigma_scale
+                kernel_content = self.neural_image.get_kernel(content_kernel_type, content_kernel_size, sigma=sigma)
+
+            var.rgb_warped, var.rgb_warped_map, var.kernel_content = self.neural_image_forward(opt, external_kernel=kernel_content, return_kernel=True) # keep var entry name for compatibility with visuialization and logging
+            var.kernel_content = kernel_content.detach()
+            
+            # learn warp
+            self.warp_param.requires_grad = True # learn warping parameters
+            for param in self.neural_image.parameters(): # freeze neural_image content , including rank1, rank2, diff_sigma
+                param.requires_grad = False
+            warp_setting = opt.arch.warp
+            warp_kernel_size = warp_setting.kernel_size
+            warp_kernel_type = warp_setting.kernel_type
+            if warp_kernel_type in ["combined_diff" , "gaussian_diff"]:
+                sigma_diff = self.neural_image.gaussian_diff_kernel_sigma
+                sigma_diff.requires_grad = False  # we freeze sigma in warp loss
+                sigma_diff = sigma_diff* warp_setting.sigma_scale
+                #ic(sigma_diff)
+                kernel_warp = self.neural_image.get_kernel(warp_kernel_type, warp_kernel_size, external_diff_sigma=sigma_diff)
+            else:
+                sigma = interp_schedule(self.neural_image.progress, warp_setting.c2f_kernel)
+                sigma = sigma *  warp_setting.sigma_scale
+                kernel_warp = self.neural_image.get_kernel(warp_kernel_type, warp_kernel_size, sigma=sigma)
+
+            var.rgb_warped_additional, var.rgb_warped_map_additional, var.kernel_warp = self.neural_image_forward(opt, external_kernel=kernel_warp, return_kernel=True)
+            var.kernel_warp = var.kernel_warp.detach()
+            
+            # turn on the grad of content for backprop
+            for param in self.neural_image.parameters(): 
+                param.requires_grad = True
+            self.neural_image.gaussian_diff_kernel_sigma.requires_grad = True
+
+        else:
+            var.rgb_warped, var.rgb_warped_map, var.kernel = self.neural_image_forward(opt, return_kernel=True)
+        return var
+
+    def neural_image_forward(self,opt, external_kernel=None, return_kernel=False):
+        xy_grid = warp.get_normalized_pixel_grid_crop(opt)
+        xy_grid_warped = warp.warp_grid(opt,xy_grid,self.warp_param.weight)
+        # render images
+        if return_kernel:   
+            rgb_warped, kernel = self.neural_image.forward(opt,xy_grid_warped, external_kernel=external_kernel, return_kernel=True) # [B,HW,3]
+        else:
+            rgb_warped = self.neural_image.forward(opt,xy_grid_warped, external_kernel=external_kernel)# [B,HW,3]
+        
+        rgb_warped_map = rgb_warped.view(opt.batch_size,opt.H_crop,opt.W_crop,3).permute(0,3,1,2) # [B,3,H,W]
+
+        if return_kernel:
+            return rgb_warped, rgb_warped_map, kernel
+        return rgb_warped, rgb_warped_map
+
     def TV_loss(self, svdImage):
         # Total Variance Loss
         r1, r2 = svdImage.rank1, svdImage.rank2
@@ -160,10 +269,15 @@ class NeuralImageFunction(torch.nn.Module):
         self.kernel_size = opt.arch.kernel_size
         self.resolution = opt.arch.resolution # W, H
 
+        if self.kernel_type == "seperate":
+            self.kernel_content = opt.arch.content
+            self.kernel_warp = opt.arch.warp
+        
         self.device = opt.device
         # c2f_schedule options
         self.c2f_kernel = opt.c2f_schedule.kernel_t
         self.c2f_rank = opt.c2f_schedule.rank
+
 
     @torch.no_grad()
     def get_gaussian_kernel(self, t, kernel_size: int):
@@ -174,32 +288,30 @@ class NeuralImageFunction(torch.nn.Module):
         kernel = math.exp(-t) * scipy.special.iv(ns, t)
         return torch.tensor(kernel).float()                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 
 
-    def get_gaussian_diff_kernel(self, t, kernel_size: int, sigma_scale=None, external_sigma=None):
+    def get_gaussian_diff_kernel(self, kernel_size: int, sigma_scale=None, external_sigma=None):
         
         if external_sigma is not None:
-            sigma = external_sigma
+            sigma = external_sigma * (1 if sigma_scale is None else sigma_scale) # scaling parameter for combined kernel
         elif hasattr(self,"gaussian_diff_kernel_sigma"):
             # use internal sigma for neural image if external_sigma is None
-            # reuse diff model parameter sigm
-            if sigma_scale != None: # scaling parameter for combined kernel
-                sigma = sigma_scale * self.gaussian_diff_kernel_sigma
-            else: 
-                sigma = self.gaussian_diff_kernel_sigma
+            # reuse diff model parameter 
+            sigma = self.gaussian_diff_kernel_sigma * (1 if sigma_scale is None else sigma_scale) # scaling parameter for combined kernel
         else:
-            # create and return the parater used as sigma.
-            sigma = torch.tensor(t).to(self.device)
-        
+            error("gaussian_diff_kernel_sigma is not defined")
+        #ic(sigma, kernel_size)
         ns =torch.arange(-(kernel_size//2), kernel_size//2+1).to(self.device)
-        exponent = - 0.5 * (ns / max(sigma,0.01)) * (ns / max(sigma,0.01))
+        exponent = - 0.5 * (ns / max(sigma,0.001)) * (ns / max(sigma,0.001))
         kernel = 1/max(sigma*math.sqrt(2*math.pi), 1) * torch.exp(exponent) 
-        return kernel.to(torch.float), sigma.to(torch.float)
+        return kernel.to(torch.float)
 
-    def get_combined_diff_kernel(self, t, kernel_size: int, mode="weighted"):
+    def get_combined_diff_kernel(self,kernel_size: int, mode="weighted",sigma_scale=1., external_sigma=None):
 
         combine_levels = self.opt.arch.combine_levels 
+        #ic(external_sigma)
+
         
         kernels = torch.stack(tuple(
-            self.get_gaussian_diff_kernel(t, kernel_size, sigma_scale=2**i)[0] 
+            self.get_gaussian_diff_kernel(kernel_size, sigma_scale=2**i * sigma_scale, external_sigma=external_sigma) 
             for i in range(combine_levels)))
         if mode == "weighted":
             weight = torch.arange(1, combine_levels+1).to(self.device).unsqueeze(1)
@@ -217,66 +329,94 @@ class NeuralImageFunction(torch.nn.Module):
         kernel = torch.zeros(self.kernel_size)
         kernel[self.kernel_size-t:self.kernel_size+t+1] = 1 / (t*2 + 1)
         return kernel
-    def get_scheduled_sigma(self):
-        return interp_schedule(self.progress, self.c2f_kernel)
-    def get_kernel(self, external_sigma=None) -> torch.tensor:
-        # the blurness of kernel depends on scheduled t parameter
-        t = self.get_scheduled_sigma()
+        
+    def get_kernel(self, kernel_type, kernel_size, sigma=None, external_diff_sigma=None):
+        if kernel_type in ["gaussian", "average"]:
+            assert sigma is not None, "sigma should be provided for kernel_type={kernel_type}"
+
         # smaller kernel size for small t, for faster computation 
-        if self.kernel_type != "combined_diff": 
+        if kernel_type not in  ["combined_diff", "seperate"] and sigma!=None: 
             # in combined_diff, kernel size should be fixed, t doesn't affect kernel size
-            kernel_size = min(int(t * 4) , self.kernel_size)
+            kernel_size = min(int(sigma * 6) , kernel_size)
+        
+        # smaller kernel size for small t, for faster computation 
+        if kernel_type not in  ["combined_diff", "seperate"] and external_diff_sigma !=None: 
+            # in combined_diff, kernel size should be fixed, t doesn't affect kernel size
+            kernel_size = min(int(external_diff_sigma * 6) , kernel_size)
+
         else:
             kernel_size = self.kernel_size
-
         if kernel_size % 2 == 0 :
             kernel_size += 1
 
-        if external_sigma is not None:
-            kernel , _ = self.get_gaussian_diff_kernel(t, kernel_size, external_sigma=external_sigma)
-        elif self.kernel_type == "gaussian":
-            kernel = self.get_gaussian_kernel(t, kernel_size)
-        elif self.kernel_type == "average":
-            kernel =  self.get_average_kernel(t, kernel_size)
-        elif self.kernel_type == "gaussian_diff":
-            kernel, _ = self.get_gaussian_diff_kernel(t, kernel_size)
-        elif self.kernel_type == "combined_diff":
-            kernel = self.get_combined_diff_kernel(t, kernel_size)
-        else: 
-            raise ValueError(f"invalid kernel type at \"{self.kernel_type}\"")
+        match kernel_type:
+            case "gaussian":
+                kernel = self.get_gaussian_kernel(sigma, kernel_size)
+            case "average":
+                kernel =  self.get_average_kernel(sigma, kernel_size) 
+            case "gaussian_diff":
+                kernel = self.get_gaussian_diff_kernel(kernel_size, external_sigma=external_diff_sigma)
+            case "combined_diff":
+                kernel = self.get_combined_diff_kernel(kernel_size, external_sigma=external_diff_sigma)
+            case "seperate":
+                # this case happens when evaluating models (not trainging from graph)
+                # we return the content mode kernel here for sharper evaluation result
+                content_kernel_type = self.kernel_content.kernel_type
+                content_kernel_size = self.kernel_content.kernel_size
+                if content_kernel_type in ["combined_diff" , "gaussian_diff"]:
+                    sigma_diff = self.gaussian_diff_kernel_sigma
+                    sigma_diff = sigma_diff * self.kernel_content.sigma_scale
+                    kernel = self.get_kernel(content_kernel_type, content_kernel_size, external_diff_sigma=sigma_diff)
+                else:
+                    sigma = interp_schedule(self.progress, self.kernel_content.c2f_kernel)
+                    sigma = sigma* self.kernel_content.sigma_scale
+                    kernel = self.get_kernel(content_kernel_type, content_kernel_size, sigma=sigma)
+            case _:
+                raise ValueError(f"invalid kernel type at \"{kernel_type}\"")
+
         return kernel.to(self.device)
 
     def define_network(self, opt):
         self.max_ranks = opt.arch.max_ranks
-        rank1 = torch.zeros(3, self.max_ranks, self.resolution[0])
+        rank1 = torch.zeros(3, self.max_ranks, self.resolution[0]).float()
         rank1 = torch.abs(torch.normal(rank1, 0.1))
-        rank2 = torch.zeros(3, self.max_ranks, self.resolution[1])
+        rank2 = torch.zeros(3, self.max_ranks, self.resolution[1]).float()
         rank2 = torch.abs(torch.normal(rank2, 0.1))
         self.register_parameter(name='rank1', param=torch.nn.Parameter(rank1))
         self.register_parameter(name='rank2', param=torch.nn.Parameter(rank2))
     
     def register_diff_kernel(self):
         # register kernel if it is differentialble
-        if self.kernel_type in ["gaussian_diff", "combined_diff"] :
+        if self.kernel_type in ["gaussian_diff", "combined_diff", "seperate"] :
             t = interp_schedule(0, self.c2f_kernel)
             # register sigma as differentiable parameter
-            _ , sigma, = self.get_gaussian_diff_kernel(t, self.kernel_size)
+
+            # create and return the parater used as sigma.
+            sigma = torch.tensor(t).to(self.device).to(torch.float)
             self.register_parameter(name='gaussian_diff_kernel_sigma', param=torch.nn.Parameter(sigma.to(self.device)))
 
     def get_scheduled_rank(self):
         return int(interp_schedule(self.progress, self.c2f_rank))
+    
+    def get_scheduled_sigma(self):
+        return interp_schedule(self.progress, self.c2f_kernel)
 
-    def forward(self, opt, coord_2D, external_kernel=None, external_sigma=None):  # [B,...,3]
+    def forward(self, opt, coord_2D, external_kernel=None, mode=None, return_kernel=False):  # [B,...,3]
+        
         cur_rank = self.get_scheduled_rank()
-
+        # the blurness of kernel depends on scheduled t parameter
+        sigma = self.get_scheduled_sigma()
+        
         if external_kernel is not None:
             kernel = external_kernel
         else:
-            kernel = self.get_kernel(external_sigma).expand(cur_rank, 1, -1)
+            kernel = self.get_kernel(self.kernel_type, self.kernel_size, sigma=sigma)
 
-        r1_blur = torch_F.conv1d(self.rank1[:, :cur_rank, :], kernel,
+        kernel_expand = kernel.expand(cur_rank, 1, -1)
+
+        r1_blur = torch_F.conv1d(self.rank1[:, :cur_rank, :], kernel_expand,
                                  bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
-        r2_blur = torch_F.conv1d(self.rank2[:, :cur_rank, :], kernel,
+        r2_blur = torch_F.conv1d(self.rank2[:, :cur_rank, :], kernel_expand,
                                  bias=None, stride=1, padding="same", dilation=1, groups=cur_rank)
        
         rbg = torch.sum(r1_blur.unsqueeze(
@@ -287,4 +427,7 @@ class NeuralImageFunction(torch.nn.Module):
 
         sampled_rbg = torch_F.grid_sample(rbg.expand(B, -1, -1, -1), coord_2D.unsqueeze(1), align_corners=False, mode=opt.arch.grid_interp).squeeze(2)
         
+        if return_kernel:
+            return sampled_rbg.permute(0, 2, 1), kernel
+
         return sampled_rbg.permute(0, 2, 1)
