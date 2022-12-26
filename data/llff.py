@@ -41,9 +41,11 @@ class Dataset(base.Dataset):
 
     def parse_cameras_and_bounds(self,opt):
         fname = "{}/poses_bounds.npy".format(self.path)
-        data = torch.tensor(np.load(fname),dtype=torch.float32)
+        # data contains [R|t|h|w|focal|near|far] for each image
+        data = torch.tensor(np.load(fname),dtype=torch.float32) #[N,17]
+
         # parse cameras (intrinsics and poses)
-        cam_data = data[:,:-2].view([-1,3,5]) # [N,3,5]
+        cam_data = data[:,:-2].view([-1,3,5]) # [N,3,5] 
         poses_raw = cam_data[...,:4] # [N,3,4]
         poses_raw[...,0],poses_raw[...,1] = poses_raw[...,1],-poses_raw[...,0]
         raw_H,raw_W,self.focal = cam_data[0,:,-1]
