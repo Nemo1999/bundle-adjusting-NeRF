@@ -254,6 +254,7 @@ class Graph(base.Graph):
         warped_grid_hom = xy_grid_hom@warp_matrix.transpose(-2,-1)
         warped_grid = warped_grid_hom[...,:2]/(warped_grid_hom[...,2:]+1e-8) # [B,HW,2]
         # predict rgb image
+        self.neural_image.requires_grad_(False)
         rgb_whole = self.neural_image.forward(opt, warped_grid)
         rgb_whole = rgb_whole.view(opt.H, opt.W, 3).permute(2,0,1)
         return rgb_whole
