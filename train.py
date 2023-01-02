@@ -15,16 +15,19 @@ def main():
     opt_cmd = options.parse_arguments(sys.argv[1:])
     opt = options.set(opt_cmd=opt_cmd)
     options.save_options_file(opt)
+    if opt.wandb:
+        wandb.init(
+            project=f"{opt.group}",
+            notes=f"planar run: model={opt.model}, name={opt.name}, yaml={opt.yaml}",
+            tags=["planar", opt.name],
+            config=opt,
+        )
+    else:
+        wandb.init(mode="disabled")
 
-    wandb.init(
-        project=f"{opt.group}",
-        notes=f"planar run: model={opt.model}, name={opt.name}, yaml={opt.yaml}",
-        tags=["planar", opt.name],
-        config=opt,
-    )
     wandb.run.name = f"{opt.name}"
 
-
+    # train model
     with torch.cuda.device(opt.device):
 
         model = importlib.import_module("model.{}".format(opt.model))
@@ -37,6 +40,7 @@ def main():
         m.setup_visualizer(opt)
 
         m.train(opt)
+
 
 if __name__=="__main__":
     main()

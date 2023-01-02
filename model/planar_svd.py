@@ -55,8 +55,8 @@ class Model(planar.Model):
                 xy_grid = warp.get_normalized_pixel_grid_crop(opt)
                 xy_grid_warped = warp.warp_grid(opt,xy_grid,self.graph.warp_param.weight)
                 # render images
-                kernel = neural_image.get_kernel(kernel_type="gaussian_diff", kernel_size=sigma_scale*6, external_diff_sigma=sigma*sigma_scale)
-                rgb_warped = neural_image.forward(opt,xy_grid_warped) # [B,HW,3]
+                kernel = self.graph.neural_image.get_kernel(kernel_type="gaussian_diff", kernel_size=sigma_scale*6, external_diff_sigma=sigma*sigma_scale)
+                rgb_warped = self.graph.neural_image.forward(opt,xy_grid_warped, external_kernel=kernel) # [B,HW,3]
                 image_pert = var.image_pert.view(opt.batch_size, 3, opt.H_crop*opt.W_crop).permute(0, 2, 1)
                 l2_loss = ((rgb_warped - image_pert)**2).mean(axis=2, keepdim=False).mean(axis=1, keepdim=False)
                 
@@ -67,7 +67,7 @@ class Model(planar.Model):
                 wandb.log({f"P_all_grad_sigma'_2^{exponent}": total_grad_sigma}, step=step)
 
                 # log all-patch grad w.r.t warp parameters
-                total_grad_warp = torch.autograd.grad(l2_loss.mean(), self.graph.warp_param.weight, retain_graph=opt.log_per_patch_grad)[0]
+                total_grad_warp = torch.autograd.grad(l2_loss.mean(), self.graph.warp_param.weight, retain_graph=opt.log_per_patch_loss)[0]
                 #total_grad_warp *= weight
                 total_grad_warp_norm = torch.norm(total_grad_warp, dim=1)
                 total_warp_delta = (self.graph.warp_param.weight - self.warp_pert)  # current warp - GT warp

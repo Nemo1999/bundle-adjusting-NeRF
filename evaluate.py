@@ -2,7 +2,7 @@ import numpy as np
 import os,sys,time
 import torch
 import importlib
-
+import wandb
 import options
 from util import log
 
@@ -13,6 +13,16 @@ def main():
 
     opt_cmd = options.parse_arguments(sys.argv[1:])
     opt = options.set(opt_cmd=opt_cmd)
+
+    if opt.wandb:
+        wandb.init(
+            project=f"{opt.group}",
+            notes=f"planar run: model={opt.model}, name={opt.name}, yaml={opt.yaml}",
+            tags=["planar", opt.name],
+            config=opt,
+        )
+    else:
+        wandb.init(mode="disabled")
 
     with torch.cuda.device(opt.device):
 

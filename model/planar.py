@@ -108,8 +108,9 @@ class Model(base.Model):
                                     for y in (-opt.warp.noise_t,opt.warp.noise_t)]
         def create_random_perturbation():
             warp_pert = torch.randn(opt.warp.dof,device=opt.device)*opt.warp.noise_h
-            warp_pert[0] += trans_pert[i][0]
-            warp_pert[1] += trans_pert[i][1]
+            if opt.warp.dof > 1:
+                warp_pert[0] += trans_pert[i][0]
+                warp_pert[1] += trans_pert[i][1]
             return warp_pert
         for i in range(opt.batch_size):
             warp_pert = create_random_perturbation()
@@ -160,22 +161,23 @@ class Model(base.Model):
         warp_error = (self.graph.warp_param.weight-self.warp_pert).norm(dim=-1).mean()
         self.tb.add_scalar("{0}/{1}".format(split,"warp error"),warp_error,step)
         wandb.log({"P_all_warp_err": warp_error}, step=step)
-        
+
         # per patch psnr and warp_error is for visualization only
         image_pert = var.image_pert.view(opt.batch_size,3,opt.H_crop*opt.W_crop).permute(0,2,1)
         warp_error = (self.graph.warp_param.weight - self.warp_pert).norm(dim=-1)
-        # log per-patch PSNR and Warp Error
-        for i in range(opt.batch_size):
-            PSNR_name = f"P_{i}_PSNR"
-            WARP_name = f"P_{i}_warp_err"
-            warp_error_patch = warp_error[i]
-            mse_patch = self.graph.MSE_loss(var.rgb_warped[i],image_pert[i])
-            psnr_patch  = -10 * mse_patch.log10()
-            self.tb.add_scalar("{0}/{1}".format(split,PSNR_name),psnr_patch,step)
-            self.tb.add_scalar("{0}/{1}".format(split,WARP_name),warp_error_patch,step)
-            wandb.log({PSNR_name: psnr_patch}, step=step)
-            wandb.log({WARP_name: warp_error_patch}, step=step)
-        
+        if opt.log_per_patch_loss:
+            # log per-patch PSNR and Warp Error
+            for i in range(opt.batch_size):
+                PSNR_name = f"P_{i}_PSNR"
+                WARP_name = f"P_{i}_warp_err"
+                warp_error_patch = warp_error[i]
+                mse_patch = self.graph.MSE_loss(var.rgb_warped[i],image_pert[i])
+                psnr_patch  = -10 * mse_patch.log10()
+                self.tb.add_scalar("{0}/{1}".format(split,PSNR_name),psnr_patch,step)
+                self.tb.add_scalar("{0}/{1}".format(split,WARP_name),warp_error_patch,step)
+                wandb.log({PSNR_name: psnr_patch}, step=step)
+                wandb.log({WARP_name: warp_error_patch}, step=step)
+
 
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):
@@ -199,11 +201,11 @@ class Model(base.Model):
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_boxes_GT",frame_GT[None])
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_entire",frame2[None])
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train","image_spectrum",frame_fft[None])
-        
-        if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian: 
+
+        if opt.tb and hasattr(opt.tb, "log_jacobian") and opt.tb.log_jacobian:
             # visualize jacobian with respect to homography and translation
             trans_grad_img, homo_grad_img = self.graph.pose2image_jacobian(opt)
-            # take absolute value 
+            # take absolute value
             trans_grad_img = torch.abs(trans_grad_img)
             homo_grad_img = torch.abs(homo_grad_img)
             trans_range = (torch.min(trans_grad_img).item(), torch.max(trans_grad_img).item())
@@ -211,8 +213,8 @@ class Model(base.Model):
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train", "diff_translation", trans_grad_img, num_vis=(1,2), from_range=trans_range, cmap="viridis")
             util_vis.tb_wandb_image(opt,self.tb,self.it+1,"train", "diff_homography", homo_grad_img, num_vis=(2,4), from_range=homo_range, cmap="viridis")
 
-            
-            
+
+
 # ============================ computation graph for forward/backprop ============================
 
 class Graph(base.Graph):
@@ -236,7 +238,7 @@ class Graph(base.Graph):
         loss = edict()
         if opt.loss_weight.render is not None:
             image_pert = var.image_pert.view(opt.batch_size,3,opt.H_crop*opt.W_crop).permute(0,2,1)
-            
+
             loss.render = self.MSE_loss(var.rgb_warped,image_pert)
         return loss
 
@@ -245,9 +247,9 @@ class Graph(base.Graph):
         # render with additional xy_translation or homography parameter
         #xy_translation, homography_param = pose_perterb
         xy_grid = warp.get_normalized_pixel_grid(opt)[:1] # only use 1 grid instead of opt.batch_size
-        # translate grid 
+        # translate grid
         xy_grid += xy_translation
-        # convert homo parameter to homo matrix using lie 
+        # convert homo parameter to homo matrix using lie
         warp_matrix = lie.sl3_to_SL3(homography_param)
         # warp grid using homography matrix
         xy_grid_hom = camera.to_hom(xy_grid)
@@ -265,7 +267,7 @@ class Graph(base.Graph):
             vectorize = True if opt.model == "planar" else False
             strategy = "forward-mode" if opt.model == "planar" else "reverse-mode" # only forward-mode on planar model
             trans_img, homo_img = torch.autograd.functional.jacobian(
-                lambda t,h: self.render_pose2image(t,h, opt=opt), 
+                lambda t,h: self.render_pose2image(t,h, opt=opt),
                 (torch.zeros(2).to(self.device), torch.zeros(8).to(self.device)), # translation + homography params
                 create_graph=False,
                 strict = False,
@@ -274,7 +276,7 @@ class Graph(base.Graph):
         # trans_img now have shape (2, H*W*3)
         assert tuple(trans_img.shape) == (3,opt.H,opt.W,2) , f"trans_img has shape {trans_img.shape}"
         trans_img = trans_img.permute(3, 0, 1, 2)
-        homo_img = homo_img.permute(3, 0, 1, 2) 
+        homo_img = homo_img.permute(3, 0, 1, 2)
         return trans_img, homo_img
 
 class NeuralImageFunction(torch.nn.Module):

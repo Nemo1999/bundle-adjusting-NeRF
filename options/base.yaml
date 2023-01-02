@@ -1,5 +1,5 @@
 # default
-
+wandb: true
 group: 0_test                                               # name of experiment group
 name: debug                                                 # name of experiment run
 model:                                                      # type of model (must be specified from command line)
@@ -49,10 +49,12 @@ tb:                                                         # TensorBoard option
     num_images: [4,8]                                       # number of (tiled) images to visualize in TensorBoard
 visdom:                                                     # Visdom options
     server: 0.0.0.0                                       # server to host Visdom
-    port: 8001                                              # port number for Visdom
+    port: 8000                                              # port number for Visdom
 
 freq:                                                       # periodic actions during training
     scalar: 200                                             # log losses and scalar states (every N iterations)
     vis: 1000                                               # visualize results (every N iterations)
     val: 20                                                 # validate on val set (every N epochs)
     ckpt: 50                                                # save checkpoint (every N epochs)
+
+log_per_patch_loss: false
