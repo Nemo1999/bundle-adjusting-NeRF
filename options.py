@@ -91,9 +91,8 @@ def process_options(opt):
         np.random.seed(opt.seed)
         torch.manual_seed(opt.seed)
         torch.cuda.manual_seed_all(opt.seed)
-        # dont' add seed to name, since we can filter it in wandb
-        #if opt.seed!=0: 
-        #    opt.name = str(opt.name)+"_seed{}".format(opt.seed)
+        # add seed to name, since we can filter it in wandb
+        opt.name = str(opt.name)+"_seed{}".format(opt.seed)
     else:
         # create random string as run ID
         randkey = "".join(random.choice(string.ascii_uppercase) for _ in range(4))
