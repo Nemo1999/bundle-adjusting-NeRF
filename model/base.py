@@ -127,7 +127,6 @@ class Model():
         self.timer.it_end = time.time()
         util.update_timer(opt,self.timer,self.ep,len(loader))
         return loss
-     
 
     def summarize_loss(self,opt,var,loss):
         loss_all = 0.
@@ -175,7 +174,7 @@ class Model():
             for key,value in metric.items():
                 self.tb.add_scalar("{0}/{1}".format(split,key),value,step)
             wandb.log(metric, step=step)
-        
+
     @torch.no_grad()
     def visualize(self,opt,var,step=0,split="train"):
         raise NotImplementedError

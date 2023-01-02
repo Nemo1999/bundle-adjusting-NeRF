@@ -15,6 +15,7 @@ from util import log,debug
 from . import base
 import camera
 import wandb
+from icecream import  ic
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -144,6 +145,11 @@ class Model(base.Model):
         print("SSIM:  {:8.2f}".format(np.mean([r.ssim for r in res])))
         print("LPIPS: {:8.2f}".format(np.mean([r.lpips for r in res])))
         print("--------------------------")
+
+        wandb.run.summary["TEST_PSNR"] = np.mean([r.psnr for r in res])
+        wandb.run.summary["TEST_SSIM"] = np.mean([r.ssim for r in res])
+        wandb.run.summary["TEST_LPIPS"] = np.mean([r.lpips for r in res])
+
         # dump numbers to file
         quant_fname = "{}/quant.txt".format(opt.output_path)
         with open(quant_fname,"w") as file:
@@ -160,9 +166,9 @@ class Model(base.Model):
             rgb_vid_fname = "{}/test_view_rgb.mp4".format(opt.output_path)
             depth_vid_fname = "{}/test_view_depth.mp4".format(opt.output_path)
             os.system("ffmpeg -y -framerate 30 -i {0}/rgb_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(test_path,rgb_vid_fname))
-            wandb.log({"test_rgb_vid": wandb.Video(self.rgb_vid_fname)})
+            wandb.log({"test_rgb_vid": wandb.Video(rgb_vid_fname)})
             os.system("ffmpeg -y -framerate 30 -i {0}/depth_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(test_path,depth_vid_fname))
-            wandb.log({"test_depth_vid": wandb.Video(self.depth_vide_fname)})
+            wandb.log({"test_depth_vid": wandb.Video(depth_vid_fname)})
         else:
             pose_pred,pose_GT = self.get_all_training_poses(opt)
             poses = pose_pred if opt.model=="barf" else pose_GT
@@ -191,9 +197,9 @@ class Model(base.Model):
             rgb_vid_fname = "{}/novel_view_rgb.mp4".format(opt.output_path)
             depth_vid_fname = "{}/novel_view_depth.mp4".format(opt.output_path)
             os.system("ffmpeg -y -framerate 30 -i {0}/rgb_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(novel_path,rgb_vid_fname))
-            wandb.log({"test_rgb_vid": wandb.Video(self.rgb_vid_fname)})
+            wandb.log({"test_rgb_vid": wandb.Video(rgb_vid_fname)})
             os.system("ffmpeg -y -framerate 30 -i {0}/depth_%d.png -pix_fmt yuv420p {1} >/dev/null 2>&1".format(novel_path,depth_vid_fname))
-            wandb.log({"test_depth_vid": wandb.Video(self.depth_vid_fname)})
+            wandb.log({"test_depth_vid": wandb.Video(depth_vid_fname)})
 
 # ============================ computation graph for forward/backprop ============================
 

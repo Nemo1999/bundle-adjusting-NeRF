@@ -191,7 +191,7 @@ def colorcode_to_number(code):
 
 
 def interp_schedule(x, schedule, left=0, right=1):
-    # linear interprete between a list of schedule values 
+    # linear interprete between a list of schedule values
     assert left <= x and right >= x
     if isinstance(schedule, torch.Tensor) and schedule.device != torch.device("cpu"):
         schedule = schedule.cpu().detach().numpy()
@@ -205,5 +205,5 @@ def gpu_memory_usage(x):
         return x.element_size() * x.nelement()
     elif isinstance(x, torch.nn.Module):
         return sum(list(map(gpu_memory_usage, x.children()))) + sum(list(map(gpu_memory_usage, x.parameters())))
-    else: 
+    else:
         return 0
