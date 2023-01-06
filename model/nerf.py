@@ -59,6 +59,9 @@ class Model(base.Model):
             # set var to all available images
             var = self.train_data.all
             self.train_iteration(opt,var,loader)
+            if hasattr( self.graph.nerf, "update_schedule"):
+                # update schedule according to iterations ( used for tensorf voxel upsampling and alphaMask updating ) 
+                self.graph.nerf.update_schedule(self.it) 
             if opt.optim.sched: self.sched.step()
             if self.it%opt.freq.val==0: self.validate(opt,self.it)
             if self.it%opt.freq.ckpt==0: self.save_checkpoint(opt,ep=None,it=self.it)
@@ -207,9 +210,11 @@ class Graph(base.Graph):
 
     def __init__(self,opt):
         super().__init__(opt)
-        self.nerf = NeRF(opt)
+        model_module = importlib.import_module("model.{}".format(opt.model))
+        log.info("building nerf...")
+        self.nerf = model_module.NeRF(opt).to(opt.device)
         if opt.nerf.fine_sampling:
-            self.nerf_fine = NeRF(opt)
+            self.nerf_fine = model_module.NeRF(opt)
 
     def forward(self,opt,var,mode=None):
         batch_size = len(var.idx)
