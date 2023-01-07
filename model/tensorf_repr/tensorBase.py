@@ -255,7 +255,9 @@ class TensorBase(torch.nn.Module):
             ckpt.update({'alphaMask.shape':alpha_volume.shape})
             ckpt.update({'alphaMask.mask':np.packbits(alpha_volume.reshape(-1))})
             ckpt.update({'alphaMask.aabb': self.alphaMask.aabb.cpu()})
-        torch.save(ckpt, path)
+        if path:
+            torch.save(ckpt, path)
+        return ckpt
 
     def load(self, ckpt):
         if 'alphaMask.aabb' in ckpt.keys():

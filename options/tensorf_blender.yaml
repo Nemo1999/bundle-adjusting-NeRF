@@ -1,0 +1,104 @@
+_parent_: options/base.yaml
+
+# --------------------------------------
+# tensorf config
+
+max_iter: 120000                                            # train to maximum number of iterations
+
+train_schedule: 
+  n_voxel_init: 2097156 # 128**3
+  n_voxel_final: 27000000 # 300**3
+  upsample_iters: [2000,3000,4000,5500,7000] # iterations for upsampling voxel grid 
+  update_alphamask_iters: [2000,4000] # iterations for updating alpha mask
+  alpha_mask_threshold: 0.0001 # threshold for updating creating alpha mask volume
+  shrink_bbox_with_alphamask: true # shrink bbox when first updating alphamask
+
+nerf:   
+  step_ratio: 0.5 # ratio between resolution and sampling_step_size
+  # this ratio will compute and estimate sampling interval using current resolution,  overwrite nerf.sample_intvs if smaller
+
+arch: 
+  shading:
+    model: SH # can be "SH" or "MLP_PE" or "MLP_Fea" or "MLP" or "RGB"
+    view_pe: 6 # positional encoding used for MLP shading model  
+    pose_pe: 6 # positional encoding used for MLP shading model  
+    fea_pe: 6 # positional encoding used for MLP shading model  
+    mlp_hidden_dim: 128 # hidden dimension of MLP shading model 
+  feature_to_density_activation: softplus # activation used to convert raw tensor density value to real densoity
+  density_shift: -10  # shift density in softplus; making density = 0  when feature == 0
+  distance_scale: 25 # scale up distance for sigma to alpha computation
+  tensorf:
+    model: TensorVMSplit # TensorVM Split or TensorCP
+      density_components: [16,16,16] # number of tensorf components for density
+      color_components: [48,48,48] # number of tensorf components for color
+  
+data:
+  scene_bbox: [-1.5, -1.5, -1.5, 1.5, 1.5, 1.5] # [x1,y1,z1,x2,y2,z2]
+
+loss_weight:                                                # loss weights (in log scale)
+    render: 1.0                                               # RGB rendering loss
+    render_fine:                                            # RGB rendering loss (for fine NeRF)
+    L1: # L1 sparsity loss
+      init: 8e-5 # before first alpha mask update
+      rest: 4e-5 # after first alpha mask update
+    Ortho: 0.0  # ???
+    TV_density: 0.0 # total variance loss for density components
+    TV_color: 0.0 # total variance loss for color components
+
+optim:                                                      # optimization options
+    lr_index: 0.02                                              # learning rate (main)
+    lr_basis: 1.e-3                                           # terminal learning (only used with sched.type=ExponentialLR)
+    lr_decade_target_ratio: 0.1 # the target decay ratio; after decay_iters inital lr decays to lr*ratio                       
+    lr_decade_iters: # -1 number of iterations the lr will decay to the target ratio; -1 will set it to n_iters
+    lr_upsample_reset: true
+    algo: Adam # optimizer
+
+
+#---------------------------------------
+# nerf config
+
+
+nerf:                                                       # NeRF-specific options
+    view_dep: true                                          # condition MLP on viewpoint
+    depth:                                                  # depth-related options
+        param: metric                                       # depth parametrization (for sampling along the ray)
+        range: [2,6]                                        # near/far bounds for depth sampling
+    sample_intvs: 128                                       # number of samples
+    sample_stratified: true                                 # stratified sampling
+    fine_sampling: false                                    # hierarchical sampling with another NeRF
+    sample_intvs_fine:                                      # number of samples for the fine NeRF
+    rand_rays: 1024                                         # number of random rays for each step
+    density_noise_reg:                                      # Gaussian noise on density output as regularization
+    setbg_opaque: false                                     # fill transparent rendering with known background color (Blender only)
+
+data:                                                       # data options
+    dataset: blender                                        # dataset name
+    scene: lego                                             # scene name
+    image_size: [400,400]                                   # input image sizes [height,width]
+    num_workers: 4                                          # number of parallel workers for data loading
+    preload: true                                           # preload the entire dataset into the memory
+    bgcolor: 1                                              # background color (Blender only)
+    val_sub: 4                                              # consider a subset of N validation samples
+
+camera:                                                     # camera options
+    model: perspective                                      # type of camera model
+    ndc: false                                              # reparametrize as normalized device coordinates (NDC)
+
+                                        # decay rate (can be empty if lr_end were specified)
+
+batch_size:                                                 # batch size (not used for NeRF/BARF) 
+      # in nerf batchsize ~= nerf.rand_rays, and is evenly spread across all poses 
+max_epoch:                                                  # train to maximum number of epochs (not used for NeRF/BARF)
+
+
+trimesh:                                                    # options for marching cubes to extract 3D mesh
+    res: 128                                                # 3D sampling resolution
+    range: [-1.2,1.2]                                       # 3D range of interest (assuming same for x,y,z)
+    thres: 25.                                              # volume density threshold for marching cubes
+    chunk_size: 16384                                       # chunk size of dense samples to be evaluated at a time
+
+freq:                                                       # periodic actions during training
+    scalar: 200                                             # log losses and scalar states (every N iterations)
+    vis: 1000                                               # visualize results (every N iterations)
+    val: 2000                                               # validate on val set (every N iterations)
+    ckpt: 5000  

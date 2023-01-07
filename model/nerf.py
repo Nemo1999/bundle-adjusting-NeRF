@@ -16,6 +16,7 @@ from . import base
 import camera
 import wandb
 from icecream import  ic
+import importlib
 # ============================ main engine for training and evaluation ============================
 
 class Model(base.Model):
@@ -61,7 +62,7 @@ class Model(base.Model):
             self.train_iteration(opt,var,loader)
             if hasattr( self.graph.nerf, "update_schedule"):
                 # update schedule according to iterations ( used for tensorf voxel upsampling and alphaMask updating ) 
-                self.graph.nerf.update_schedule(self.it) 
+                self.graph.nerf.update_schedule(self.opt, self.it) 
             if opt.optim.sched: self.sched.step()
             if self.it%opt.freq.val==0: self.validate(opt,self.it)
             if self.it%opt.freq.ckpt==0: self.save_checkpoint(opt,ep=None,it=self.it)
@@ -249,7 +250,7 @@ class Graph(base.Graph):
         return var.pose
 
     def render(self,opt,pose,intr=None,ray_idx=None,mode=None):
-        batch_size = len(pose)
+        batch_size = len(pose) # B = n_views
         center,ray = camera.get_center_and_ray(opt,pose,intr=intr) # [B,HW,3]
         while ray.isnan().any(): # TODO: weird bug, ray becomes NaN arbitrarily if batch_size>1, not deterministic reproducible
             center,ray = camera.get_center_and_ray(opt,pose,intr=intr) # [B,HW,3]
